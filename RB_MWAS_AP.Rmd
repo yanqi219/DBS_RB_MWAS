@@ -1,0 +1,2424 @@
+---
+title: "RB_MWAS_AP"
+author: "Qi Yan"
+date: "07/09/2020"
+output: 
+  html_document:
+    toc: TRUE # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    toc_float: true
+    number_sections: FALSE
+    theme: united  
+    highlight: tango
+    df_print: paged
+    code_folding: show
+---
+
+<style type="text/css">
+
+.main-container {
+  max-width: 2200px;
+  margin-left: auto;
+  margin-right: auto;
+}
+body{ /* Normal  */
+      font-size: 16px;
+  }
+h1.title {
+  color: DarkRed;
+}
+h1 { /* Header 1 */
+  color: DarkBlue;
+}
+h2 { /* Header 2 */
+  color: DarkBlue;
+}
+h3 { /* Header 3 */
+  color: DarkBlue;
+}
+  
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(sas7bdat)
+library(WGCNA)
+library(tidyverse)
+library(xlsx)
+library(qqman)
+# library(ggbiplot)
+library(ggpubr)
+library(doParallel)
+library(RColorBrewer)
+library(sqldf)
+library(glmnet)
+library(caret)
+library(impute)
+library(limma)
+library(mixOmics)
+library(MetabNet)
+library(magrittr)
+library(dendextend)
+library(zoo)
+library(WaveICA)
+library(stringr)
+
+options(stringsAsFactors = FALSE)
+allowWGCNAThreads()
+```
+
+/Users/qiyan/ OR /Users/qiyan/ 
+
+# Prepare data
+
+Mraceshort
+
+Birthyear
+
+Motherage
+
+When we need to adjust for an SES variable—as would be appropriate for an air pollution analysis-- we often used QUINYOST for neighborhood SES; when using individual-level SES we sometimes used PREPAYN and sometimes MEDUC, but both of these variables have some missing.  QUINYOST probably has the least missing.
+
+Study population
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# Exposure data
+Subject_data <- read.sas7bdat(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/rb_dbs.sas7bdat")
+dim(Subject_data)
+
+# Restrict to controls only
+Control_data <- Subject_data[which(Subject_data$Case_Control_Status == 0),]
+rm(Subject_data)
+Control_data <- Control_data[order(Control_data$ccapid),]
+Control_data$ccapid <- paste("S", Control_data$ccapid, sep = "")
+dim(Control_data)
+```
+
+Exposure data
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# Exposure data
+AP_data <- read.sas7bdat(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/caline_apcc.sas7bdat")
+colnames(AP_data)[which(colnames(AP_data) == "CCAPid")] <- "ccapid"
+AP_data$ccapid <- paste("S", AP_data$ccapid, sep = "")
+dim(AP_data)
+colnames(AP_data)
+
+# Link w/ study population
+AP_data_control <- AP_data[which(AP_data$ccapid %in% Control_data$ccapid),]
+rm(AP_data)
+
+# Remove missing
+AP_data_control <- AP_data_control[-which(is.na(AP_data_control$COTrim3)),]
+Control_data <- Control_data[which(Control_data$ccapid %in% AP_data_control$ccapid),]
+
+# Combine it w/ other key variables
+Control_data <- merge(Control_data, AP_data_control, by = "ccapid")
+
+# Add metabolomics sample id back
+RB_Case_Control_Link <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/RB_Case_Control_Link.csv", header = T)
+RB_Case_Control_Link$ccapid <- paste("S", RB_Case_Control_Link$ccapid, sep = "")
+Control_data <- merge(RB_Case_Control_Link, Control_data, by = "ccapid", all.y = T)
+
+cat("So", dim(AP_data_control)[1], "controls have air pollution exposure data.")
+# ggdensity(data = AP_data_control, x = "PM25Trim2", fill = "#0073C2FF", color = "#0073C2FF", add = "mean", rug = TRUE)
+```
+
+Metabolomics data
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+##################
+# Unify two platform
+##################
+
+clean_linkSub <- function(x){
+  x$Sample.ID <- str_sub(x$Sample.ID, 1, -3)
+  x <- x[!duplicated(x$Sample.ID),]
+  x$injection.order <- c(1:nrow(x))
+  x$class <- "Subject"
+  x$class[grepl("nist", x$Sample.ID)] <- "QC"
+  x$class[grepl("q3June2014", x$Sample.ID)] <- "QC"
+  return(x)
+}
+
+linkSub_hilic <- read.table(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/bloodspot_mapping_hilicpos.txt", header = T)
+linkSub_hilic <- clean_linkSub(x = linkSub_hilic)
+linkSub_c18 <- read.table(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/bloodspot_mapping_c18neg.txt", header = T)
+linkSub_c18 <- clean_linkSub(x = linkSub_c18)
+setdiff(linkSub_hilic$Sample.ID, linkSub_c18$Sample.ID)
+cat("There are no difference between two mapping files.")
+
+##################
+# Whole population
+##################
+
+# HILIC
+HILICpos <- read.table(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/RAW_mzcalibrated_untargeted_mediansummarized_featuretable.txt", header = T)
+
+ColumnName <- colnames(HILICpos)  ## re-format the sample name
+ColumnName <- c(ColumnName[1:2], str_sub(ColumnName[3:length(ColumnName)], 1,-7))
+colnames(HILICpos) <- ColumnName
+
+MzTime <- HILICpos[,1:2]
+
+HILICpos <- HILICpos[,which(colnames(HILICpos) %in% linkSub_hilic$File.Name)]
+linkSub_hilic <- linkSub_hilic[which(linkSub_hilic$File.Name %in% colnames(HILICpos)),]
+
+colnames(HILICpos) <- linkSub_hilic$Sample.ID
+HILICpos <- cbind(MzTime, HILICpos)
+
+C18neg <- read.table(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/RAW_mzcalibrated_untargeted_mediansummarized_featuretable.txt", header = T)
+
+ColumnName <- colnames(C18neg)  ## re-format the sample name
+ColumnName <- c(ColumnName[1:2], str_sub(ColumnName[3:length(ColumnName)], 1,-7))
+colnames(C18neg) <- ColumnName
+
+MzTime <- C18neg[,1:2]
+
+# C18
+C18neg <- C18neg[,which(colnames(C18neg) %in% linkSub_c18$File.Name)]
+linkSub_c18 <- linkSub_c18[which(linkSub_c18$File.Name %in% colnames(C18neg)),]
+
+colnames(C18neg) <- linkSub_c18$Sample.ID
+C18neg <- cbind(MzTime, C18neg)
+
+# There are some missing subjects in hilicpos and c18neg, so this step is to remove those subjects
+overlap <- intersect(linkSub_hilic$Sample.ID, linkSub_c18$Sample.ID)
+
+HILICpos <- HILICpos[,c("mz", "time", overlap)]
+linkSub_hilic <- linkSub_hilic[which(linkSub_hilic$Sample.ID %in% overlap),]
+C18neg <- C18neg[,c("mz", "time", overlap)]
+linkSub_c18 <- linkSub_c18[which(linkSub_c18$Sample.ID %in% overlap),]
+
+save(HILICpos, linkSub_hilic, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/DBS_hilicpos_1602_raw.RData")
+save(C18neg, linkSub_c18, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/DBS_c18neg_1602_raw.RData")
+
+##################
+# Study population - Controls
+##################
+
+# HILIC
+## generate datasets for AP MWAS
+overlap <- intersect(Control_data$hilicpos, linkSub_hilic$Sample.ID)
+
+HILICpos_use <- HILICpos[,which(colnames(HILICpos) %in% c("mz", "time", overlap))]
+linkSub_use <- linkSub_hilic[which(linkSub_hilic$Sample.ID %in% overlap),]
+class_use <- Control_data
+
+rownames(HILICpos_use) <- paste("met_",1:nrow(HILICpos_use),sep = "")
+linkID <- HILICpos_use[,1:2]
+HILICpos_use <- HILICpos_use[,-c(1,2)]
+
+save(HILICpos_use, linkSub_use, class_use, linkID, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/DBS_hilicpos_248_APraw.RData")
+
+#C18
+overlap <- intersect(Control_data$c18neg, linkSub_c18$Sample.ID) ## there are 179 overlaps
+
+C18neg_use <- C18neg[,which(colnames(C18neg) %in% c("mz", "time", overlap))]
+linkSub_use <- linkSub_c18[which(linkSub_c18$Sample.ID %in% overlap),]
+class_use <- Control_data
+
+rownames(C18neg_use) <- paste("met_",1:nrow(C18neg_use),sep = "")
+linkID <- C18neg_use[,1:2]
+C18neg_use <- C18neg_use[,-c(1,2)]
+
+save(C18neg_use, linkSub_use, class_use, linkID, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/DBS_c18neg_248_APraw.RData")
+```
+
+# Air pollution exposure
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/DBS_hilicpos_248_APraw.RData")
+
+# CO
+ggdensity(data = class_use, x = "COTrim3", fill = "#0073C2FF", color = "#0073C2FF", add = "mean", rug = TRUE)
+cat("CO exposure during the third trimester mean:", mean(class_use$COTrim3), ", median:", median(class_use$COTrim3), ", SD:", sd(class_use$COTrim3), ", Max:", max(class_use$COTrim3), ", min:", min(class_use$COTrim3), "\n")
+# NOx
+ggdensity(data = class_use, x = "NOxTrim3", fill = "#0073C2FF", color = "#0073C2FF", add = "mean", rug = TRUE)
+cat("NOx exposure during the third trimester mean:", mean(class_use$NOxTrim3), ", median:", median(class_use$NOxTrim3), ", SD:", sd(class_use$NOxTrim3), ", Max:", max(class_use$NOxTrim3), ", min:", min(class_use$NOxTrim3), "\n")
+# PM2.5
+ggdensity(data = class_use, x = "PM25Trim3", fill = "#0073C2FF", color = "#0073C2FF", add = "mean", rug = TRUE)
+cat("PM2.5 exposure during the third trimester mean:", mean(class_use$PM25Trim3), ", median:", median(class_use$PM25Trim3), ", SD:", sd(class_use$PM25Trim3), ", Max:", max(class_use$PM25Trim3), ", min:", min(class_use$PM25Trim3), "\n")
+```
+
+
+# Metabolomics
+
+## LC-MS method
+
+HRM profiling was completed according to established methods (Walker et al., 2018; Walker et al., 2019). Serum samples were transported from California Biobank to Emory and stored at −80 °C. Batches of 40 serum samples were removed from storage and thawed on ice. Each sample was then thoroughly vortexed, and 65 μL of serum was treated with 130 μL of LC-MS grade acetonitrile. The extract was equilibrated for 30 min on ice and centrifuged at 16,100×g for 10 min to remove precipitated proteins. The resulting supernatant was transferred to an autosampler containing a low volume insert and maintained at 4 °C until analysis (< 24 h). NIST 1950 (Simon-Manso et al., 2013) was analyzed at the beginning and end of the entire analytical run and for additional quality control (QC) two replicate pooled human plasma samples were analyzed at the beginning, middle, and end of each batch of 40 samples for normalization and batch effect evaluation. Sample extracts were analyzed in triplicate using a dual column, dual polarity approach that includes hydrophilic interaction (HILIC) chromatography with positive ESI and C18 chromatography with negative ESI (Ultimate 3000, Q-Exactive HF, Thermo Fisher, m/z range 85–1275) (Walker et al., 2018). Following a 10 μL sample injection, HILIC separation was accomplished using a 2.1 cm×5 cm×2.5 μm HILIC column (Waters XBridge BEH Amide XP HILIC) and acetonitrile gradient (A=water, B=acetonitrile, C=2% formic acid) consisting of an initial 1.5 min period of 22.5% A, 75% B, 2.5% C, followed by linear increase to 77.5% A, 20% B, 2.5% C at 4 min and hold for 1 min. Separation by C18 was with 2.1 cm×5 cm×3 μm column (Higgins endcapped C18) with C=10mM ammonium and the following gradient: initial 0.5 min period of 60% A, 35% B, 5% C, followed by linear increase to 0% A, 95% B, 5% C at 1.5 min and then held for an additional 3 min. Mobile phase flow rate was held at 0.4 mL/min for 1.5 min, and then increased to 0.5 mL/min. The mass spectrometer was operated using ESI mode at a resolution of 120,000 and mass-to-charge ratio (m/z) range 85–1275. Source tune settings included capillary temperature, sheath gas, auxiliary gas, sweep gas and spray voltage settings of 300 °C, 45 (arbitrary units), 25 (arbitrary units), 1 (arbitrary units) and+3.5 kV, respectively for positive mode, and 200 °C, 30 (arbitrary units), 5 (arbitrary units), 1 (arbitrary units) and+3.0 kV for negative mode. S-Lens RF level was maintained at 45. High-resolution detection of m/z features was accomplished by maximum injection time of 10 milliseconds and AGC target of 1×106. Raw data files were extracted and aligned using apLCMS (Yu et al., 2009) with modifications by xMSanalyzer (Uppal et al., 2013). Uniquely detected ions consisted of m/z, retention time and ion abundance, referred to as m/z features.
+
+## Preprocess
+
+__Summarize the percentage of missing features per batch.__
+
+total_feature: total number of features
+non_zero: non-zero features
+feature_90: 90% non-zero features
+feature_50: 50% non-zero features
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+#hilic
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/DBS_hilicpos_1602_raw.RData")
+linkSub_use_hilicpos <- linkSub_hilic; rm(linkSub_hilic)
+rownames(HILICpos) <- paste("met_",1:nrow(HILICpos),sep = "")
+linkID_hilicpos <- HILICpos[,1:2]; HILICpos <- HILICpos[,-c(1:2)]
+HILICpos_use <- HILICpos; rm(HILICpos)
+#C18
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/DBS_c18neg_1602_raw.RData")
+linkSub_use_c18neg <- linkSub_c18; rm(linkSub_c18)
+rownames(C18neg) <- paste("met_",1:nrow(C18neg),sep = "")
+linkID_c18neg <- C18neg[,1:2]; C18neg <- C18neg[,-c(1:2)]
+C18neg_use <- C18neg; rm(C18neg)
+
+# # so remove one outlier for all datasets, outliers were identified later but moved here
+# outliers <- c("10811DO37", "10370RH42", "11134AP41", "11990DW32", "83869WT30", "q3June2014_13f", "84869SL48", "81852DH46", "10667JL14", "11155MM33")
+# C18neg_use <- C18neg_use[,-which(colnames(C18neg_use) %in% outliers)]
+# HILICpos_use <- HILICpos_use[,-which(colnames(HILICpos_use) %in% outliers)]
+# # class_use <- class_use[-which(class_use$ExternalDNACode %in% outliers),]
+# linkSub_use_hilicpos <- linkSub_use_hilicpos[-which(linkSub_use_hilicpos$Sample.ID %in% outliers),]
+# linkSub_use_c18neg <- linkSub_use_c18neg[-which(linkSub_use_c18neg$Sample.ID %in% outliers),]
+
+###############
+# Batch summary
+###############
+
+#hilic
+batch_hilic <- as.data.frame(cbind(linkSub_use_hilicpos$Batch, t(HILICpos_use)))
+
+batch_results <- data.frame()
+for (i in 1:max(linkSub_use_hilicpos$Batch)){
+  each_batch <- batch_hilic[which(batch_hilic$V1 == i),-1]
+  
+  n_sub <- nrow(each_batch) # number of subjects
+  na_count <- colSums(each_batch == 0)
+  
+  total_feature <- sum(na_count != 6) # total number of features
+  non_zero <- sum(na_count == 0) # non-zero features
+  feature_90 <- sum((na_count/n_sub) < 0.1) # 90% non-zero features
+  feature_50 <- sum((na_count/n_sub) < 0.5) # 50% non-zero features
+  mean_median <- median(apply(each_batch, 2, mean))
+  
+  temp_result <- data.frame(n_sub, total_feature, non_zero, feature_90, feature_50, mean_median)
+  batch_results <- rbind(batch_results,temp_result)
+}
+
+batch_results
+
+#c18
+batch_c18 <- as.data.frame(cbind(linkSub_use_c18neg$Batch, t(C18neg_use)))
+
+batch_results <- data.frame()
+for (i in 1:max(linkSub_use_c18neg$Batch)){
+  each_batch <- batch_c18[which(batch_c18$V1 == i),-1]
+  
+  n_sub <- nrow(each_batch) # number of subjects
+  na_count <- colSums(each_batch == 0)
+  
+  total_feature <- sum(na_count != 6) # total number of features
+  non_zero <- sum(na_count == 0) # non-zero features
+  feature_90 <- sum((na_count/n_sub) < 0.1) # 90% non-zero features
+  feature_50 <- sum((na_count/n_sub) < 0.5) # 50% non-zero features
+  mean_median <- median(apply(each_batch, 2, mean))
+  
+  temp_result <- data.frame(n_sub, total_feature, non_zero, feature_90, feature_50, mean_median)
+  batch_results <- rbind(batch_results,temp_result)
+}
+
+batch_results
+
+rm(batch_c18, batch_hilic, batch_results, temp_result, each_batch)
+```
+
+__Remove features w/ missings in more than 75% of samples and impute w/ halfdatmin.__
+
+__Log2 transformation and Autoscaling.__
+
+15952 and 10939 HILICpos and C18neg features left.
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+## remove missing in more than 75% of all samples
+missing <- apply(HILICpos_use, 1, function(x) (sum(x == 0)/ncol(HILICpos_use) <= 0.75))
+HILICpos_norm <- HILICpos_use[missing,]; rm(HILICpos_use)
+missing <- apply(C18neg_use, 1, function(x) (sum(x == 0)/ncol(C18neg_use) <= 0.75))
+C18neg_norm <- C18neg_use[missing,]; rm(C18neg_use)
+linkID_hilicpos <- linkID_hilicpos[which(rownames(linkID_hilicpos) %in% rownames(HILICpos_norm)),]
+linkID_c18neg <- linkID_c18neg[which(rownames(linkID_c18neg) %in% rownames(C18neg_norm)),]
+
+# HILICpos_norm <- HILICpos_use
+# C18neg_norm <- C18neg_use
+
+## Imputation
+HILIC_missingIndex <- as.data.frame(HILICpos_norm == 0)
+C18_missingIndex <- as.data.frame(C18neg_norm == 0)
+
+halfdatmin <- min(HILICpos_norm[HILICpos_norm > 0])/2
+HILICpos_norm[HILICpos_norm == 0] <- halfdatmin
+halfdatmin <- min(C18neg_norm[C18neg_norm > 0])/2
+C18neg_norm[C18neg_norm == 0] <- halfdatmin
+
+## Log2 transform
+HILICpos_norm <- log2(HILICpos_norm)
+C18neg_norm <- log2(C18neg_norm)
+
+## Auto scaling
+AutoNorm<-function(x){
+  (x - mean(x))/sd(x, na.rm=T);
+}
+HILICpos_norm<-t(apply(HILICpos_norm, 1, AutoNorm))
+C18neg_norm<-t(apply(C18neg_norm, 1, AutoNorm))
+```
+
+__Inspect the drift of the QC samples.__
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# HILIC
+QC_id <- linkSub_use_hilicpos[which(linkSub_use_hilicpos$class=="QC"),]
+QC_id <- QC_id[order(QC_id$injection.order),]
+QC <- data.frame(t(HILICpos_norm[,QC_id$Sample.ID]))
+
+QC_mean <- as.data.frame(apply(QC, 1, mean))
+QC_mean$Sample.ID <- rownames(QC_mean)
+QC_mean <- merge(QC_mean, QC_id, by="Sample.ID")
+QC_mean <- QC_mean[order(QC_mean$injection.order),]
+
+## The mean intensity of QCs
+plot(QC_mean$injection.order, QC_mean$`apply(QC, 1, mean)`, col = QC_mean$Batch)
+
+## Heatmap of correlation in QCS
+library(ggfortify)
+library(RColorBrewer)
+myPalette <- colorRampPalette(rev(brewer.pal(11, "Spectral")))
+cor_original<-cor(t(QC))
+autoplot(cor_original,geom="tile")+scale_fill_gradientn(colors=myPalette(4),limits=c(0,1),name="r value")+labs(x="",y="")+
+  theme(axis.text.x=element_text(angle=90))+
+  theme(axis.text=element_text(face="bold"))
+
+pca.datExpr = mixOmics::pca(t(HILICpos_norm), ncomp = 10, center = FALSE, scale = FALSE)
+mixOmics::plotIndiv(pca.datExpr, group = linkSub_use_hilicpos$Batch, ind.names = TRUE, 
+          legend = TRUE, title = 'HILIC PC score using all features')
+
+# C18
+QC_id <- linkSub_use_c18neg[which(linkSub_use_c18neg$class=="QC"),]
+QC_id <- QC_id[order(QC_id$injection.order),]
+QC <- data.frame(t(C18neg_norm[,QC_id$Sample.ID]))
+
+QC_mean <- as.data.frame(apply(QC, 1, mean))
+QC_mean$Sample.ID <- rownames(QC_mean)
+QC_mean <- merge(QC_mean, QC_id, by="Sample.ID")
+QC_mean <- QC_mean[order(QC_mean$injection.order),]
+
+plot(QC_mean$injection.order, QC_mean$`apply(QC, 1, mean)`, col = QC_mean$Batch)
+
+## Heatmap of correlation in QCS
+myPalette <- colorRampPalette(rev(brewer.pal(11, "Spectral")))
+cor_original<-cor(t(QC))
+autoplot(cor_original,geom="tile")+scale_fill_gradientn(colors=myPalette(4),limits=c(0,1),name="r value")+labs(x="",y="")+
+  theme(axis.text.x=element_text(angle=90))+
+  theme(axis.text=element_text(face="bold"))
+
+pca.datExpr = mixOmics::pca(t(C18neg_norm), ncomp = 10, center = FALSE, scale = FALSE)
+mixOmics::plotIndiv(pca.datExpr, group = linkSub_use_c18neg$Batch, ind.names = TRUE, 
+          legend = TRUE, title = 'C18 PC score using all features')
+```
+
+So the drift of QCs is pretty large.
+
+__Conduct batch effect correction.__ 
+
+Tried several different method: combat, MetNormalizer, NOREVA, normAE, and WaveICA.
+
+MetaboAnalyst currently suppoorts nine well-established methods (ComBat, EigenMS, QC-RLSC, ANCOVA, RUV-random, RUV2, RUVseq, NOMIS and CCMN) for batch effect correction.
+
+__WaveICA__
+
+First remove features if they were missing in more than 75% of all samples.
+Then imputed the rest of missing samples with half of the lowest value.
+Then conduct batch effect correction.
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE, results='hide'}
+## import the class data
+class <- read.sas7bdat(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/rb_dbs.sas7bdat")
+RB_Case_Control_Link <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/RB_Case_Control_Link.csv", header = T)
+class <- merge(RB_Case_Control_Link, class, by = "ccapid", all.y = T)
+
+class_WaveICA <- class[,c("hilicpos", "Case_Control_Status")] # "12003CH56" and "11887JA27" don't have age variable
+#################
+## HILIC
+################
+temp <- merge(class_WaveICA, linkSub_use_hilicpos, by.x = "hilicpos", by.y = "Sample.ID", all.y = T)
+temp <- temp[which(!is.na(temp$Case_Control_Status) | grepl("nist", temp$hilicpos) | grepl("q3June2014", temp$hilicpos)),]
+temp <- temp[,c(1,5,4,2,6)]
+colnames(temp) <- c("sample.name", "injection.order", "batch", "group", "class")
+# temp$group <- as.character(temp$group)
+temp$group[which(is.na(temp$group))] <- 2 ## 2 is QC
+temp <- temp[order(temp$injection.order),]
+batch_information <- temp
+
+HILICpos_norm <- HILICpos_norm[,temp$sample.name]
+
+## decide to remove nist QCs
+HILIC_WaveICA_data <- data.frame(t(HILICpos_norm[,-c(1,1602)]))
+batch_information <- batch_information[-c(1,1602),]
+
+## WaveICA
+data_wave_reconstruct_hilic<-WaveICA(data=HILIC_WaveICA_data,wf="haar",batch=batch_information$batch,group=batch_information$group,K=20,t=0.05,t2=0.05,alpha=0)
+HILICpos_use_t <- data_wave_reconstruct_hilic$data_wave
+
+#################
+## C18
+################
+C18neg_norm <- C18neg_norm[,temp$sample.name]
+
+## decide to remove nist QCs
+C18_WaveICA_data <- data.frame(t(C18neg_norm[,-c(1,1602)]))
+
+## WaveICA
+data_wave_reconstruct_c18<-WaveICA(data=C18_WaveICA_data,wf="haar",batch=batch_information$batch,group=batch_information$group,K=20,t=0.05,t2=0.05,alpha=0)
+C18neg_use_t <- data_wave_reconstruct_c18$data_wave
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+# HILIC
+QC_id <- batch_information[which(batch_information$class=="QC"),]
+QC_id <- QC_id[order(QC_id$injection.order),]
+QC <- data.frame(HILICpos_use_t[QC_id$sample.name,])
+
+QC_mean <- as.data.frame(apply(QC, 1, mean))
+QC_mean$sample.name <- rownames(QC_mean)
+QC_mean <- merge(QC_mean, QC_id, by="sample.name")
+QC_mean <- QC_mean[order(QC_mean$injection.order),]
+
+## The mean intensity of QCs
+plot(QC_mean$injection.order, QC_mean$`apply(QC, 1, mean)`, col = QC_mean$batch)
+
+## Heatmap of correlation in QCS
+myPalette <- colorRampPalette(rev(brewer.pal(11, "Spectral")))
+cor_WaveICA<-cor(t(QC))
+autoplot(cor_WaveICA,geom="tile")+scale_fill_gradientn(colors=myPalette(4),limits=c(0,1),name="r value")+labs(x="",y="")+
+  theme(axis.text.x=element_text(angle=90))+
+  theme(axis.text=element_text(face="bold"))
+
+pca.datExpr = mixOmics::pca(HILICpos_use_t, ncomp = 10, center = TRUE, scale = TRUE)
+mixOmics::plotIndiv(pca.datExpr, group = batch_information$batch, ind.names = TRUE, 
+          legend = TRUE, title = 'HILIC PC score using all features after WaveICA')
+
+# C18
+QC_id <- batch_information[which(batch_information$class=="QC"),]
+QC_id <- QC_id[order(QC_id$injection.order),]
+QC <- data.frame(C18neg_use_t[QC_id$sample.name,])
+
+QC_mean <- as.data.frame(apply(QC, 1, mean))
+QC_mean$sample.name <- rownames(QC_mean)
+QC_mean <- merge(QC_mean, QC_id, by="sample.name")
+QC_mean <- QC_mean[order(QC_mean$injection.order),]
+
+## The mean intensity of QCs
+plot(QC_mean$injection.order, QC_mean$`apply(QC, 1, mean)`, col = QC_mean$batch)
+
+## Heatmap of correlation in QCS
+myPalette <- colorRampPalette(rev(brewer.pal(11, "Spectral")))
+cor_WaveICA<-cor(t(QC))
+autoplot(cor_WaveICA,geom="tile")+scale_fill_gradientn(colors=myPalette(4),limits=c(0,1),name="r value")+labs(x="",y="")+
+  theme(axis.text.x=element_text(angle=90))+
+  theme(axis.text=element_text(face="bold"))
+
+pca.datExpr = mixOmics::pca(C18neg_use_t, ncomp = 10, center = TRUE, scale = TRUE)
+mixOmics::plotIndiv(pca.datExpr, group = batch_information$batch, ind.names = TRUE, 
+          legend = TRUE, title = 'C18 PC score using all features after WaveICA')
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+linkSub_use_hilicpos <- linkSub_use_hilicpos[which(linkSub_use_hilicpos$Sample.ID %in% rownames(HILICpos_use_t)),]
+HILICpos_use_t <- as.data.frame(HILICpos_use_t[order(rownames(HILICpos_use_t)),])
+linkSub_use_c18neg <- linkSub_use_c18neg[which(linkSub_use_c18neg$Sample.ID %in% rownames(C18neg_use_t)),]
+C18neg_use_t <- as.data.frame(C18neg_use_t[order(rownames(C18neg_use_t)),])
+
+# save(HILICpos_use_t, C18neg_use_t, linkSub_use_hilicpos, linkSub_use_c18neg, linkID_hilicpos, linkID_c18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_1600_WaveICA.RData")
+```
+
+__Restrict to only controls__
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/DBS_hilicpos_248_APraw.RData"); rm(HILICpos_use, linkID, linkSub_use)
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_1600_WaveICA.RData")
+
+HILICpos_norm_t_noOUt <- HILICpos_use_t[which(rownames(HILICpos_use_t) %in% class_use$hilicpos),]; rm(HILICpos_use_t)
+C18neg_norm_t_noOUt <- C18neg_use_t[which(rownames(C18neg_use_t) %in% class_use$c18neg),]; rm(C18neg_use_t)
+HILICpos_norm_t_noOUt <- HILICpos_norm_t_noOUt[order(rownames(HILICpos_norm_t_noOUt)),]
+C18neg_norm_t_noOUt <- C18neg_norm_t_noOUt[order(rownames(C18neg_norm_t_noOUt)),]
+
+linkSub_use_hilicpos <- linkSub_use_hilicpos[which(linkSub_use_hilicpos$Sample.ID %in% rownames(HILICpos_norm_t_noOUt)),]
+linkSub_use_c18neg <- linkSub_use_c18neg[which(linkSub_use_c18neg$Sample.ID %in% rownames(C18neg_norm_t_noOUt)),]
+
+class_use_noOUT <- class_use[which(class_use$hilicpos %in% rownames(HILICpos_norm_t_noOUt)),]; rm(class_use)
+class_use_noOUT <- class_use_noOUT[order(class_use_noOUT$hilicpos),]
+```
+
+After all preprocessing steps, there are 15952 HILICpos and 10939 C18neg features left.
+
+Try to figure out the association between covariates and metabolomics.
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# HILIC
+## Get PCs from metabolomics
+pca.datExpr = mixOmics::pca(HILICpos_norm_t_noOUt, ncomp = 10, center = TRUE, scale = FALSE)
+mixOmics::plotIndiv(pca.datExpr, group = class_use_noOUT$GENDER, ind.names = TRUE, 
+          legend = TRUE, title = 'PC score using all features')
+PCs <- pca.datExpr$variates$X
+## Calculate correlations
+Covariates <- class_use_noOUT[,c("GENDER", "HispanicAnyRace", "RaceNIH", "mage", "meduc", "parity", "QUINYOST_birth", "GestWeeks")]
+rownames(Covariates) <- class_use_noOUT$hilicpos
+correlation <- corAndPvalue(PCs, Covariates)
+
+M <- correlation$cor
+p.mat <- correlation$p
+library(corrplot)
+corrplot(M, method="color", p.mat = p.mat, sig.level = 0.05, insig = "blank", tl.col="black", tl.srt=45, title = "HILIC")
+
+# C18
+## Get PCs from metabolomics
+pca.datExpr = mixOmics::pca(C18neg_norm_t_noOUt, ncomp = 10, center = TRUE, scale = FALSE)
+mixOmics::plotIndiv(pca.datExpr, group = class_use_noOUT$GENDER, ind.names = TRUE, 
+          legend = TRUE, title = 'PC score using all features')
+PCs <- pca.datExpr$variates$X
+## Calculate correlations
+Covariates <- class_use_noOUT[,c("GENDER", "HispanicAnyRace", "RaceNIH", "mage", "meduc", "parity", "QUINYOST_birth", "GestWeeks")]
+rownames(Covariates) <- class_use_noOUT$ExternalDNACode
+correlation <- corAndPvalue(PCs, Covariates)
+
+M <- correlation$cor
+p.mat <- correlation$p
+corrplot(M, method="color", p.mat = p.mat, sig.level = 0.05, insig = "blank", tl.col="black", tl.srt=45, title = "C18")
+```
+
+MRaceShort
+
+Birthyear
+
+Motherage
+
+When we need to adjust for an SES variable—as would be appropriate for an air pollution analysis-- we often used QUINYOST for neighborhood SES; when using individual-level SES we sometimes used PREPAYN and sometimes MEDUC, but both of these variables have some missing.  QUINYOST probably has the least missing.
+
+Remove missing subjects w/ missing covariates and outliers.
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+table(class_use_noOUT$MRaceShort)
+table(class_use_noOUT$birthyear)
+table(class_use_noOUT$MotherAge)
+table(class_use_noOUT$QUINYOST_birth)
+table(class_use_noOUT$parity)
+table(class_use_noOUT$GestWeeks)
+
+removed <- class_use_noOUT$Barcode[which(is.na(class_use_noOUT$MRaceShort)|is.na(class_use_noOUT$birthyear)|is.na(class_use_noOUT$MotherAge)|is.na(class_use_noOUT$parity)|is.na(class_use_noOUT$QUINYOST_birth)|is.na(class_use_noOUT$GestWeeks))]
+
+removed <- c("000005S7M557", removed) # also remove the outlier
+
+HILICpos_norm_t_noOUt <- HILICpos_norm_t_noOUt[-which(rownames(HILICpos_norm_t_noOUt) %in% removed),]
+C18neg_norm_t_noOUt <- C18neg_norm_t_noOUt[-which(rownames(C18neg_norm_t_noOUt) %in% removed),]
+linkSub_use_hilicpos <- linkSub_use_hilicpos[-which(linkSub_use_hilicpos$Sample.ID %in% removed),]
+linkSub_use_c18neg <- linkSub_use_c18neg[-which(linkSub_use_c18neg$Sample.ID %in% removed),]
+class_use_noOUT <- class_use_noOUT[-which(class_use_noOUT$Barcode %in% removed),]
+
+# recode some variables
+class_use_noOUT <-
+  class_use_noOUT %>%
+  mutate(birthyear=cut(birthyear, breaks=c(-Inf, 2000, 2003, Inf), labels=c("1998-2000","2001-2003","2004-2007"))) %>%
+  mutate(MotherAge=cut(MotherAge, breaks=c(-Inf, 19, 24, 29, 34, Inf), labels=c("<20","20-24","25-29","30-34", ">=35"))) %>%
+  mutate(parity=ifelse(parity>=2,2,parity)) %>%
+  mutate(GestWeeks=cut(GestWeeks, breaks=c(-Inf, 36, Inf), labels=c("preterm","term"))) %>%
+  mutate(meduc=cut(meduc, breaks=c(-Inf, 1, 3, Inf), labels=c("<8","9-12",">=13")))
+
+table(class_use_noOUT$MRaceShort)
+table(class_use_noOUT$birthyear)
+table(class_use_noOUT$MotherAge)
+table(class_use_noOUT$QUINYOST_birth)
+table(class_use_noOUT$parity) # 0,1,2-two or more
+table(class_use_noOUT$GestWeeks)
+```
+
+__Get the residuals__
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+###############
+# Get residuals
+###############
+
+## control for "MRaceShort", "birthyear", "MotherAge", "QUINYOST_birth", "parity", "GestWeeks", "meduc"
+
+## Link covariates with features
+HILICpos_feature_w_cov <- cbind(class_use_noOUT,HILICpos_norm_t_noOUt)
+
+fit_feature <- lm(data = HILICpos_feature_w_cov, as.matrix(HILICpos_feature_w_cov[,735:ncol(HILICpos_feature_w_cov)]) ~ as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), na.action = na.exclude)
+
+residual_feature <- as.matrix(residuals(fit_feature),nrow = dim(HILICpos_feature_w_cov)[1])
+save_residual <- as.data.frame(residual_feature)
+rownames(save_residual) <- rownames(HILICpos_norm_t_noOUt)
+HILICpos_residual <- save_residual; rm(save_residual, residual_feature, fit_feature)
+sum(is.na(HILICpos_residual))
+
+C18neg_feature_w_cov <- cbind(class_use_noOUT,C18neg_norm_t_noOUt)
+
+fit_feature <- lm(data = C18neg_feature_w_cov, as.matrix(C18neg_feature_w_cov[,735:ncol(C18neg_feature_w_cov)]) ~ as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), na.action = na.exclude)
+residual_feature <- as.matrix(residuals(fit_feature),nrow = dim(C18neg_feature_w_cov)[1])
+save_residual <- as.data.frame(residual_feature)
+rownames(save_residual) <- rownames(C18neg_norm_t_noOUt)
+C18neg_residual <- save_residual; rm(save_residual, residual_feature, fit_feature)
+sum(is.na(C18neg_residual))
+
+save(HILICpos_norm_t_noOUt, HILICpos_residual, C18neg_norm_t_noOUt, C18neg_residual, class_use_noOUT, linkID_hilicpos, linkID_c18neg, linkSub_use_hilicpos, linkSub_use_c18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_241_WaveICA_AP.RData")
+```
+
+# Demographics
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_241_WaveICA_AP.RData")
+our_summary1 <-
+  list("Age" =
+       list("<=19" = ~ qwraps2::n_perc0(.data$RaceNIH == 1),
+            "20-29"  = ~ qwraps2::n_perc0(.data$RaceNIH == 2),
+            "30-34" = ~ qwraps2::n_perc0(.data$RaceNIH == 3),
+            ">=35" = ~ qwraps2::n_perc0(.data$RaceNIH == 4)),
+       "Sex" =
+       list("Male" = ~ qwraps2::n_perc0(.data$GENDER == "M"),
+            "Female"  = ~ qwraps2::n_perc0(.data$GENDER == "F")),
+       "Race" =
+       list("White" = ~ qwraps2::n_perc0(.data$RaceNIH == 5),
+            "Black"  = ~ qwraps2::n_perc0(.data$RaceNIH == 4),
+            "PacificIslander" = ~ qwraps2::n_perc0(.data$RaceNIH == 3),
+            "Asian" = ~ qwraps2::n_perc0(.data$RaceNIH == 2),
+            "ativeAmerican" = ~ qwraps2::n_perc0(.data$RaceNIH == 1))
+       )
+whole <- qwraps2::summary_table(class_use_noOUT, our_summary1)
+colnames(whole) <- "N=240"
+whole
+```
+
+# MWAS
+
+## HILICpos
+
+### Feature selection
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_241_WaveICA_AP.RData")
+
+## COTrim3, NOxTrim3, PM25Trim3
+clock <- "PM25Trim3"
+
+X <- HILICpos_norm_t_noOUt
+X_residual <- HILICpos_residual
+Y <- class_use_noOUT[[clock]]
+linkid <- linkID_hilicpos
+
+vip_threshold <- 2
+
+###################################################
+### GLM & corr
+###################################################
+
+feature_w_cov <- cbind(class_use_noOUT, X)
+
+fit_feature <- lm(data = feature_w_cov, as.matrix(feature_w_cov[,735:ncol(feature_w_cov)]) ~ class_use_noOUT[[clock]] + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), na.action = na.exclude)
+fit_feature_summary <- summary(fit_feature)
+
+feature_pvalue <- as.data.frame(t(sapply(fit_feature_summary, function(x)  x$coefficient[2,c(1,4)])))
+rownames(feature_pvalue) <- colnames(X)
+
+# lm_func <- function(x) lm(class_use_noOUT[[clock]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), data = feature_w_cov)
+# 
+# feature_pvalue <- map_dfr(feature_w_cov[,735:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
+
+# feature_pvalue <- cbind(linkid,feature_pvalue)
+# colnames(feature_pvalue) <- c("mz","time","coef","pvalue")
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+feature_pvalue$adjust_pvalue <- p.adjust(feature_pvalue$pvalue, method="BH")
+#
+# pvalue.datExpr <- cbind(feature_pvalue,t(X))
+# pvalue.datExpr <- pvalue.datExpr[order(pvalue.datExpr$pvalue),]
+
+# IN the end not using bicor but pearson correlation
+
+# bicor_result <- bicorAndPvalue(x = X_residual, y = Y, 
+#                                  use = "pairwise.complete.obs", 
+#                                  alternative = "two.sided",
+#                                  maxPOutliers = 0.05)
+bicor_result <- corAndPvalue(x = X_residual, y = Y)
+feature_pvalue$bicor <- bicor_result$cor
+feature_pvalue$bicor_p <- bicor_result$p
+feature_pvalue$bicor_adjp <-p.adjust(bicor_result$p, method="BH")
+
+print(paste("Linear regression:", sum(feature_pvalue$adjust_pvalue <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_adjp <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_p <= 0.05), "features are significant (raw_p<=0.05)", sep = " "))
+
+###################################################
+### PLS
+###################################################
+
+datExpr.pls <- mixOmics::pls(X_residual, Y, ncomp = 10, mode = "regression")
+tune.pls <- mixOmics::perf(datExpr.pls, validation = "Mfold", folds = 10, progressBar = FALSE, auc = TRUE, nrepeat = 1000, cpus = 4)
+
+plot(tune.pls$Q2.total)
+abline(h = 0.0975)
+
+opt_comp <- 4
+
+# select important variables
+vip.pls.datExpr <- vip(datExpr.pls)
+
+# get vip score for all expr features and plot manhattan plots
+vip.for.selection<-as.data.frame(apply(vip.pls.datExpr[,c(1:opt_comp)],1,mean))
+vip.for.selection <- cbind(vip.for.selection,feature_pvalue)
+colnames(vip.for.selection)[1] = "vip"
+
+print(paste("PLS-R:", sum(vip.for.selection$vip >=2), "features are significant (VIP>=2)", sep = " "))
+
+vip.for.selection <- cbind(linkid,vip.for.selection)
+vip.for.selection$group[vip.for.selection$vip < vip_threshold] <- 0
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor <= 0] <- 1 ## down
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor > 0] <- 2  ## up
+
+ggplot2::ggplot(vip.for.selection,aes(x=mz,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$mz, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="M/Z",y="VIP Score")
+
+ggplot2::ggplot(vip.for.selection,aes(x=time,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$time, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="Retention Time",y="VIP Score")
+
+# Using significant features
+
+# good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold & bicor_p < 0.05)
+good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold)
+
+print(paste("Combined:", nrow(good_feats_ordered), "features are significant (VIP>=2 & Pearson cor Raw_P<=0.05)", sep = " "))
+
+good_feats_ordered.name <- {}
+for (i in 1:nrow(good_feats_ordered)) {
+  good_feats_ordered.name <- c(good_feats_ordered.name,which(colnames(X)==row.names(good_feats_ordered[i,])))
+}
+sig.X <- X[,c(good_feats_ordered.name)]
+
+# Save files
+save.plsresults.allfeatures <- cbind(vip.for.selection,t(X))
+# good_feats_ordered$rank <- 1:nrow(good_feats_ordered)
+save.plsresults.sigfeatures <- cbind(good_feats_ordered,t(sig.X))
+
+print(paste("Number of significant features:",nrow(save.plsresults.sigfeatures),sep = " "))
+```
+
+### Annotation
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+annotation <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/xMSannotator_Stage4.csv", header = T)
+annotation <- annotation[which(annotation$Confidence >= 2),] ## only confidence score greater than 2
+
+annotation$mz <- round(annotation$mz, 4)
+annotation$time <- round(annotation$time, 1)
+save.plsresults.sigfeatures$mz <- round(save.plsresults.sigfeatures$mz, 4)
+save.plsresults.sigfeatures$time <- round(save.plsresults.sigfeatures$time, 1)
+
+save.annotation <- merge(save.plsresults.sigfeatures[,1:9], annotation, by = c("mz", "time"), all.x = T)
+
+######################
+# In-house library
+######################
+
+library(xlsx)
+
+tolerance = 5
+
+HILIC_library <- read.xlsx(file = "/Users/qiyan/Dropbox/PEG/PD_Pest_MultiOmics/Raw_Data/InHouse_Library_Emory/Combined_comfirmed_metabolite_list_08032020.xlsx", 1, header = T)
+
+linkID_hilicpos$delta_mz = (tolerance) * (linkID_hilicpos$mz/1e+06)
+linkID_hilicpos$min_mz = linkID_hilicpos$mz - linkID_hilicpos$delta_mz
+linkID_hilicpos$max_mz = linkID_hilicpos$mz + linkID_hilicpos$delta_mz
+
+HILIC_verify <- data.frame()
+for(i in 1:nrow(linkID_hilicpos)){
+  rownum <- which(HILIC_library$mz >= linkID_hilicpos$min_mz[i] & HILIC_library$mz <= linkID_hilicpos$max_mz[i])
+  if (length(rownum)!=0){
+    temp <- cbind(linkID_hilicpos[i,],HILIC_library[rownum,])
+    HILIC_verify <- rbind(HILIC_verify, temp)
+  }
+  rm(temp)
+}
+
+HILIC_verify <- HILIC_verify[,c(1,2,12,13,8,6,7)]
+colnames(HILIC_verify) <- c("mz","time","mz_library","time_library","Name","KEGGID","HMDBID")
+
+# write.table(HILIC_verify, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/HILIC_verified_features.txt", sep = "\t", row.names = F,quote = F)
+
+HILIC_verify$mz <- round(HILIC_verify$mz, 4)
+HILIC_verify$time <- round(HILIC_verify$time, 1)
+
+save.annotation <- merge(save.annotation, HILIC_verify[,c(1,2,3,4,6,7)], by = c("mz", "time"), all.x = T)
+```
+
+### Mummichog
+
+Use PLSR VIP >= 2 and Pearson correlaiton raw P-value <= 0.05 as the threshold.
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+###################################################
+### Prepare for mummichog
+###################################################
+
+save.mummichog_PLS_VIP2 <- save.plsresults.allfeatures[,c(1:4,7,8)]
+save.mummichog_PLS_VIP2$"p-value" = 0.051
+
+# save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold&save.mummichog_PLS_VIP2$`pvalue.datExpr$pvalue`<pvalue_threshold] <- 0.04
+save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <- 0.04
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,7,5)]
+
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/HILICpos_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
+write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/HILICpos_MWAS_result.RData", sep = ""))
+```
+
+## C18neg
+
+### Feature selection
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_241_WaveICA_AP.RData")
+
+## COTrim3, NOxTrim3, PM25Trim3
+clock <- "PM25Trim3"
+
+X <- C18neg_norm_t_noOUt
+X_residual <- C18neg_residual
+Y <- class_use_noOUT[[clock]]
+linkid <- linkID_c18neg
+
+vip_threshold <- 2
+
+###################################################
+### GLM & corr
+###################################################
+
+feature_w_cov <- cbind(class_use_noOUT, X)
+
+fit_feature <- lm(data = feature_w_cov, as.matrix(feature_w_cov[,735:ncol(feature_w_cov)]) ~ class_use_noOUT[[clock]] + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), na.action = na.exclude)
+fit_feature_summary <- summary(fit_feature)
+
+feature_pvalue <- as.data.frame(t(sapply(fit_feature_summary, function(x)  x$coefficient[2,c(1,4)])))
+rownames(feature_pvalue) <- colnames(X)
+
+# lm_func <- function(x) lm(class_use_noOUT[[clock]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), data = feature_w_cov)
+# 
+# feature_pvalue <- map_dfr(feature_w_cov[,735:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
+
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+feature_pvalue$adjust_pvalue <- p.adjust(feature_pvalue$pvalue, method="BH")
+
+# bicor_result <- corAndPvalue(x = X_residual, y = Y)
+bicor_result <- bicorAndPvalue(x = X_residual, y = Y, use = "pairwise.complete.obs", alternative = "two.sided", maxPOutliers = 0.05)
+feature_pvalue$bicor <- bicor_result$bicor
+feature_pvalue$bicor_p <- bicor_result$p
+feature_pvalue$bicor_adjp <-p.adjust(bicor_result$p, method="BH")
+
+print(paste("Linear regression:", sum(feature_pvalue$adjust_pvalue <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_adjp <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_p <= 0.05), "features are significant (raw_p<=0.05)", sep = " "))
+
+###################################################
+### PLS
+###################################################
+
+datExpr.pls <- mixOmics::pls(X_residual, Y, ncomp = 10, mode = "regression")
+tune.pls <- mixOmics::perf(datExpr.pls, validation = "Mfold", folds = 10, progressBar = FALSE, auc = TRUE, nrepeat = 1000, cpus = 4)
+
+plot(tune.pls$Q2.total)
+abline(h = 0.0975)
+
+opt_comp <- 4
+
+# select important variables
+vip.pls.datExpr <- vip(datExpr.pls)
+
+# get vip score for all expr features and plot manhattan plots
+vip.for.selection<-as.data.frame(apply(vip.pls.datExpr[,c(1:opt_comp)],1,mean))
+vip.for.selection <- cbind(vip.for.selection,feature_pvalue)
+colnames(vip.for.selection)[1] = "vip"
+
+print(paste("PLS-R:", sum(vip.for.selection$vip >=2), "features are significant (VIP>=2)", sep = " "))
+
+vip.for.selection <- cbind(linkid,vip.for.selection)
+vip.for.selection$group[vip.for.selection$vip < vip_threshold] <- 0
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor <= 0] <- 1 ## down
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor > 0] <- 2  ## up
+
+ggplot2::ggplot(vip.for.selection,aes(x=mz,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$mz, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="M/Z",y="VIP Score")
+
+ggplot2::ggplot(vip.for.selection,aes(x=time,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$time, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="Retention Time",y="VIP Score")
+
+# Using significant features
+# good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold & bicor_p < 0.05)
+good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold)
+
+print(paste("Combined:", nrow(good_feats_ordered), "features are significant (VIP>=2 & Pearson cor Raw_P<=0.05)", sep = " "))
+
+good_feats_ordered.name <- {}
+for (i in 1:nrow(good_feats_ordered)) {
+  good_feats_ordered.name <- c(good_feats_ordered.name,which(colnames(X)==row.names(good_feats_ordered[i,])))
+}
+sig.X <- X[,c(good_feats_ordered.name)]
+
+# Save files
+save.plsresults.allfeatures <- cbind(vip.for.selection,t(X))
+# good_feats_ordered$rank <- 1:nrow(good_feats_ordered)
+save.plsresults.sigfeatures <- cbind(good_feats_ordered,t(sig.X))
+
+print(paste("Number of significant features:",nrow(save.plsresults.sigfeatures),sep = " "))
+```
+
+### Annotation
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+annotation <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/xMSannotator_Stage4.csv", header = T)
+annotation <- annotation[which(annotation$Confidence >= 2),] ## only confidence score greater than 2
+
+annotation$mz <- round(annotation$mz, 4)
+annotation$time <- round(annotation$time, 1)
+save.plsresults.sigfeatures$mz <- round(save.plsresults.sigfeatures$mz, 4)
+save.plsresults.sigfeatures$time <- round(save.plsresults.sigfeatures$time, 1)
+
+save.annotation <- merge(save.plsresults.sigfeatures[,1:9], annotation, by = c("mz", "time"), all.x = T)
+
+######################
+# In-house library
+######################
+
+library(xlsx)
+
+tolerance = 5
+
+C18_library <- read.xlsx(file = "/Users/qiyan/Dropbox/PEG/PD_Pest_MultiOmics/Raw_Data/InHouse_Library_Emory/Combined_comfirmed_metabolite_list_08032020.xlsx", 2, header = T)
+
+linkID_c18neg$delta_mz = (tolerance) * (linkID_c18neg$mz/1e+06)
+linkID_c18neg$min_mz = linkID_c18neg$mz - linkID_c18neg$delta_mz
+linkID_c18neg$max_mz = linkID_c18neg$mz + linkID_c18neg$delta_mz
+
+C18_verify <- data.frame()
+for(i in 1:nrow(linkID_c18neg)){
+  rownum <- which(C18_library$mz >= linkID_c18neg$min_mz[i] & C18_library$mz <= linkID_c18neg$max_mz[i])
+  if (length(rownum)!=0){
+    temp <- cbind(linkID_c18neg[i,],C18_library[rownum,])
+    C18_verify <- rbind(C18_verify, temp)
+  }
+  rm(temp)
+}
+
+C18_verify <- C18_verify[,c(1,2,12,13,8,6,7)]
+colnames(C18_verify) <- c("mz","time","mz_library","time_library","Name","KEGGID","HMDBID")
+
+# write.table(C18_verify, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/C18_verified_features.txt", sep = "\t", row.names = F,quote = F)
+
+C18_verify$mz <- round(C18_verify$mz, 4)
+C18_verify$time <- round(C18_verify$time, 1)
+
+save.annotation <- merge(save.annotation, C18_verify[,c(1,2,3,4,6,7)], by = c("mz", "time"), all.x = T)
+```
+
+### Mummichog
+
+Use PLSR VIP >= 2 and Pearson correlaiton raw P-value <= 0.05 as the threshold.
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+###################################################
+### Prepare for mummichog
+###################################################
+
+save.mummichog_PLS_VIP2 <- save.plsresults.allfeatures[,c(1:4,7,8)]
+save.mummichog_PLS_VIP2$"p-value" = 0.051
+
+# save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold&save.mummichog_PLS_VIP2$`pvalue.datExpr$pvalue`<pvalue_threshold] <- 0.04
+save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <- 0.04
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,7,5)]
+
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/C18neg_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
+write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/C18neg_MWAS_result.RData", sep = ""))
+```
+
+## Scatter plots
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+met = c("met_342", "met_3588", "met_4064")
+scatter <- 
+  cbind(class_use_noOUT$PM25Trim3, X[,met]) %>%
+  as.data.frame() %>%
+  dplyr::rename(PM25 = "class_use_noOUT$PM25Trim3",
+                AA = "met_3588",
+                DHA = "met_4064",
+                Hydroxybenzyl_alcohol = "met_342")
+
+a <- ggpubr::ggscatter(scatter, x = "PM25", y = "DHA",
+                       color = "black", size = 3, # Points color, shape and size
+                       add = "reg.line",  # Add regressin line
+                       add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+                       conf.int = TRUE, # Add confidence interval
+                       cor.coef = T, # Add correlation coefficient. see ?stat_cor
+                       cor.coeff.args = list(method = "pearson", label.sep = "\n", label.x.npc = "left", label.y.npc = "top"))
+b <- ggpubr::ggscatter(scatter, x = "PM25", y = "AA",
+                       color = "black", size = 3, # Points color, shape and size
+                       add = "reg.line",  # Add regressin line
+                       add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+                       conf.int = TRUE, # Add confidence interval
+                       cor.coef = T, # Add correlation coefficient. see ?stat_cor
+                       cor.coeff.args = list(method = "pearson", label.sep = "\n", label.x.npc = "left", label.y.npc = "top"))
+c <- ggpubr::ggscatter(scatter, x = "PM25", y = "Hydroxybenzyl_alcohol",
+                       color = "black", size = 3, # Points color, shape and size
+                       add = "reg.line",  # Add regressin line
+                       add.params = list(color = "blue", fill = "lightgray"), # Customize reg. line
+                       conf.int = TRUE, # Add confidence interval
+                       cor.coef = T, # Add correlation coefficient. see ?stat_cor
+                       cor.coeff.args = list(method = "pearson", label.sep = "\n", label.x.npc = "left", label.y.npc = "top"))
+
+ggarrange(a,b,c,
+          labels = c("A", "B", "C"),
+          ncol = 2, nrow = 2)
+```
+
+# Final table
+
+__Run mummichog version 2 first__
+
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Output/PM25Trim3/ -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/PM25Trim3/HILICpos_mummichog_input_vip2p0.txt -m dpj -c 0.05
+
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Output/PM25Trim3/ -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/PM25Trim3/C18neg_mummichog_input_vip2p0.txt -m negative -c 0.05
+
+```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+final_table <- function(mwas_data, wd_pathway){
+    ####################
+    # pathway analysis - mummichog server
+    ####################
+    setwd(wd_pathway)
+    mummichog_input <- read.table(file = "userInputData.txt", sep = "\t", header = T)
+    mummichog_pathway <- read.xlsx(file = "mcg_pathwayanalysis_.xlsx", 1, header = T)
+    mummichog_empirical <- read.table(file = "ListOfEmpiricalCompounds.tsv", sep = "\t", header = T)
+    mummichog_link <- read.xlsx(file = "mcg_pathwayanalysis_.xlsx", 2, header = T)    # second sheet copied from the web, is the link between feature and name
+    
+    # rearrange the link table
+    flag <- which(grepl(pattern = "E", x = as.character(mummichog_link[,1])))
+    temp <- mummichog_link[flag,]
+    temp <- temp[,c(1,2,4)]
+    colnames(temp) <- c("EmpiricalCompound", "CompoundName", "KEGGID")
+    mummichog_link$EmpiricalCompound <- na.locf(mummichog_link$EmpiricalCompound)
+    mummichog_link <- mummichog_link[-flag,]
+    mummichog_link <- merge(x = mummichog_link, y = temp, by = "EmpiricalCompound", all.x = T)
+    rm(temp,flag)
+    
+    # rearrange pathway data from wide to long
+    mummichog_pathway <- mummichog_pathway[which(mummichog_pathway$p.value<=0.05),]  #add overlap size or not
+    mummichog_pathway_expand <- data.frame()
+    for(i in 1:nrow(mummichog_pathway)){
+      temp <- mummichog_pathway[i,]
+      temp.compound <- as.character(temp$overlap_EmpiricalCompounds..id.)
+      temp.compound <- as.data.frame(unlist(strsplit(temp.compound, ",")))
+      temp.rest <- temp[,c(1:4)]
+      temp.merge <- merge(x = temp.rest, y = temp.compound, all.y = T)
+      mummichog_pathway_expand <- rbind(mummichog_pathway_expand, temp.merge)
+    }
+    colnames(mummichog_pathway_expand) <- c("pathway", "overlap_size", "pathway_size", "p.value", "EmpiricalCompound")
+    rm(temp, temp.compound, temp.merge, temp.rest)
+    
+    # combine pathway with link
+    mummichog_pathway_complete <- merge(mummichog_link, mummichog_pathway_expand, by = "EmpiricalCompound", all = T)
+    if(length(which(is.na(mummichog_pathway_complete$pathway))) != 0){
+      mummichog_pathway_complete <- mummichog_pathway_complete[-which(is.na(mummichog_pathway_complete$pathway)),]
+    }
+    mummichog_pathway_complete <- mummichog_pathway_complete[order(mummichog_pathway_complete$pathway),]
+    
+    names(mummichog_pathway_complete)[names(mummichog_pathway_complete) == "Input.m.z"] <- "mz"
+    names(mummichog_pathway_complete)[names(mummichog_pathway_complete) == "Retention.time"] <- "time"
+    
+    mummichog_pathway_complete$time <- round(as.numeric(as.character(mummichog_pathway_complete$time)), 1)
+    mummichog_pathway_complete$mz <- round(as.numeric(as.character(mummichog_pathway_complete$mz)), 4)
+    
+    ####################
+    # combine datasets
+    ####################
+    load(file = mwas_data)
+    merge_all <- merge(save.annotation, mummichog_pathway_complete, by = c("mz", "time"), all.x = T)
+    return(merge_all)
+}
+```
+
+```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+HILIC <- final_table(mwas_data = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/HILICpos_MWAS_result.RData",sep=""), wd_pathway = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Output/",clock,"/HILIC/tables/",sep=""))
+
+C18 <- final_table(mwas_data = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/C18neg_MWAS_result.RData",sep=""), wd_pathway = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Output/",clock,"/C18/tables/",sep=""))
+
+write.table(HILIC, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Output/", clock,"/HILIC_final_table.txt",sep=""), sep = "\t", row.names = F,quote = F)
+write.table(C18, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Output/",clock,"/C18_final_table.txt",sep=""), sep = "\t", row.names = F,quote = F)
+```
+
+![HILIC](/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Output/PM25Trim3/HILIC/Screen Shot 2020-10-11 at 8.44.35 PM.png)
+![C18](/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Output/PM25Trim3/C18/Screen Shot 2020-10-11 at 8.44.51 PM.png)
+
+# Sensitivity Analysis - DHA
+
+__Restrict to only controls__
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+## import the class data
+class <- read.sas7bdat(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/rb_dbs.sas7bdat")
+RB_Case_Control_Link <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/RB_Case_Control_Link.csv", header = T)
+class_use <- merge(RB_Case_Control_Link, class, by = "ccapid", all.y = T); rm(class, RB_Case_Control_Link)
+
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_1600_WaveICA.RData")
+
+HILICpos_norm_t_noOUt <- HILICpos_use_t[which(rownames(HILICpos_use_t) %in% class_use$hilicpos),]; rm(HILICpos_use_t)
+C18neg_norm_t_noOUt <- C18neg_use_t[which(rownames(C18neg_use_t) %in% class_use$c18neg),]; rm(C18neg_use_t)
+HILICpos_norm_t_noOUt <- HILICpos_norm_t_noOUt[order(rownames(HILICpos_norm_t_noOUt)),]
+C18neg_norm_t_noOUt <- C18neg_norm_t_noOUt[order(rownames(C18neg_norm_t_noOUt)),]
+
+linkSub_use_hilicpos <- linkSub_use_hilicpos[which(linkSub_use_hilicpos$Sample.ID %in% rownames(HILICpos_norm_t_noOUt)),]
+linkSub_use_c18neg <- linkSub_use_c18neg[which(linkSub_use_c18neg$Sample.ID %in% rownames(C18neg_norm_t_noOUt)),]
+
+class_use_noOUT <- class_use[which(class_use$hilicpos %in% rownames(HILICpos_norm_t_noOUt)),]; rm(class_use)
+class_use_noOUT <- class_use_noOUT[order(class_use_noOUT$hilicpos),]
+```
+
+Remove missing subjects w/ missing covariates and outliers.
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+table(class_use_noOUT$MRaceShort)
+table(class_use_noOUT$birthyear)
+table(class_use_noOUT$MotherAge)
+table(class_use_noOUT$QUINYOST_birth)
+table(class_use_noOUT$parity)
+table(class_use_noOUT$GestWeeks)
+
+removed <- class_use_noOUT$Barcode[which(is.na(class_use_noOUT$MRaceShort)|is.na(class_use_noOUT$birthyear)|is.na(class_use_noOUT$MotherAge)|is.na(class_use_noOUT$parity)|is.na(class_use_noOUT$QUINYOST_birth)|is.na(class_use_noOUT$GestWeeks))]
+
+removed <- c("000005S7M557", removed) # also remove the outlier
+
+HILICpos_norm_t_noOUt <- HILICpos_norm_t_noOUt[-which(rownames(HILICpos_norm_t_noOUt) %in% removed),]
+C18neg_norm_t_noOUt <- C18neg_norm_t_noOUt[-which(rownames(C18neg_norm_t_noOUt) %in% removed),]
+linkSub_use_hilicpos <- linkSub_use_hilicpos[-which(linkSub_use_hilicpos$Sample.ID %in% removed),]
+linkSub_use_c18neg <- linkSub_use_c18neg[-which(linkSub_use_c18neg$Sample.ID %in% removed),]
+class_use_noOUT <- class_use_noOUT[-which(class_use_noOUT$Barcode %in% removed),]
+
+# recode some variables
+class_use_noOUT <-
+  class_use_noOUT %>%
+  mutate(birthyear=cut(birthyear, breaks=c(-Inf, 2000, 2003, Inf), labels=c("1998-2000","2001-2003","2004-2007"))) %>%
+  mutate(MotherAge=cut(MotherAge, breaks=c(-Inf, 19, 24, 29, 34, Inf), labels=c("<20","20-24","25-29","30-34", ">=35"))) %>%
+  mutate(parity=ifelse(parity>=2,2,parity)) %>%
+  mutate(GestWeeks=cut(GestWeeks, breaks=c(-Inf, 36, Inf), labels=c("preterm","term")))
+
+table(class_use_noOUT$MRaceShort)
+table(class_use_noOUT$birthyear)
+table(class_use_noOUT$MotherAge)
+table(class_use_noOUT$QUINYOST_birth)
+table(class_use_noOUT$parity) # 0,1,2-two or more
+table(class_use_noOUT$GestWeeks)
+```
+
+__Get the residuals__
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+###############
+# Get residuals
+###############
+
+## control for "MRaceShort", "birthyear", "MotherAge", "QUINYOST_birth", "parity", "GestWeeks"
+
+## Link covariates with features
+HILICpos_feature_w_cov <- cbind(class_use_noOUT,HILICpos_norm_t_noOUt)
+
+fit_feature <- lm(data = HILICpos_feature_w_cov, as.matrix(HILICpos_feature_w_cov[,718:ncol(HILICpos_feature_w_cov)]) ~ as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), na.action = na.exclude)
+
+residual_feature <- as.matrix(residuals(fit_feature),nrow = dim(HILICpos_feature_w_cov)[1])
+save_residual <- as.data.frame(residual_feature)
+rownames(save_residual) <- rownames(HILICpos_norm_t_noOUt)
+HILICpos_residual <- save_residual; rm(save_residual, residual_feature, fit_feature)
+sum(is.na(HILICpos_residual))
+
+C18neg_feature_w_cov <- cbind(class_use_noOUT,C18neg_norm_t_noOUt)
+
+fit_feature <- lm(data = C18neg_feature_w_cov, as.matrix(C18neg_feature_w_cov[,718:ncol(C18neg_feature_w_cov)]) ~ as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), na.action = na.exclude)
+residual_feature <- as.matrix(residuals(fit_feature),nrow = dim(C18neg_feature_w_cov)[1])
+save_residual <- as.data.frame(residual_feature)
+rownames(save_residual) <- rownames(C18neg_norm_t_noOUt)
+C18neg_residual <- save_residual; rm(save_residual, residual_feature, fit_feature)
+sum(is.na(C18neg_residual))
+
+save(HILICpos_norm_t_noOUt, HILICpos_residual, C18neg_norm_t_noOUt, C18neg_residual, class_use_noOUT, linkID_hilicpos, linkID_c18neg, linkSub_use_hilicpos, linkSub_use_c18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_1328_WaveICA_AP.RData")
+```
+
+## Associated DHA with all covariates
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_1328_WaveICA_AP.RData")
+DHA_id <- rownames(linkID_c18neg[which(round(linkID_c18neg$mz,4) == "327.2335"),])
+DHA <- 
+  cbind(C18neg_norm_t_noOUt[,DHA_id], class_use_noOUT) %>%
+  dplyr::rename(DHA = `C18neg_norm_t_noOUt[, DHA_id]`) %>%
+  dplyr::select(DHA, Case_Control_Status, sex, MRaceShort, birthyear, MotherAge, meduc, QUINYOST_birth, parity, GestWeeks, Method) %>%
+  drop_na() %>%
+  dplyr::mutate(MRaceShort = as.factor(MRaceShort)) %>%
+  dplyr::mutate(birthyear = as.factor(birthyear)) %>%
+  dplyr::mutate(MotherAge = as.factor(MotherAge)) %>%
+  dplyr::mutate(QUINYOST_birth = as.factor(QUINYOST_birth)) %>%
+  dplyr::mutate(parity = as.factor(parity)) %>%
+  dplyr::mutate(GestWeeks = as.factor(GestWeeks)) %>%
+  dplyr::mutate(Case_Control_Status = as.factor(Case_Control_Status)) %>%
+  dplyr::mutate(sex = as.factor(sex)) %>%
+  dplyr::mutate(meduc = as.factor(meduc)) %>%
+  dplyr::mutate(Method = as.factor(Method))
+
+plot(DHA$DHA)
+
+# associated DHA level w/ all covariates among al 1177 participants
+DHA_lm <- lm(DHA ~ as.factor(Case_Control_Status) + as.factor(sex) + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(meduc) + as.factor(QUINYOST_birth) + as.factor(parity) + relevel(GestWeeks, ref = "term") + as.factor(Method), data = DHA)
+summary(DHA_lm)
+
+sjPlot::tab_model(DHA_lm)
+
+# restricted to study population
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_241_WaveICA_AP.RData")
+DHA_id <- rownames(linkID_c18neg[which(round(linkID_c18neg$mz,4) == "327.2335"),])
+DHA <- 
+  cbind(C18neg_norm_t_noOUt[,DHA_id], class_use_noOUT) %>%
+  dplyr::rename(DHA = `C18neg_norm_t_noOUt[, DHA_id]`) %>%
+  dplyr::select(DHA, Case_Control_Status, sex, MRaceShort, birthyear, MotherAge, meduc, QUINYOST_birth, parity, GestWeeks, Method, foreign, PM25Trim3) %>%
+  drop_na() %>%
+  dplyr::mutate(MRaceShort = as.factor(MRaceShort)) %>%
+  dplyr::mutate(birthyear = as.factor(birthyear)) %>%
+  dplyr::mutate(MotherAge = as.factor(MotherAge)) %>%
+  dplyr::mutate(QUINYOST_birth = as.factor(QUINYOST_birth)) %>%
+  dplyr::mutate(parity = as.factor(parity)) %>%
+  dplyr::mutate(GestWeeks = as.factor(GestWeeks)) %>%
+  dplyr::mutate(Case_Control_Status = as.factor(Case_Control_Status)) %>%
+  dplyr::mutate(sex = as.factor(sex)) %>%
+  dplyr::mutate(meduc = as.factor(meduc)) %>%
+  dplyr::mutate(Method = as.factor(Method)) %>%
+  dplyr::mutate(foreign = as.factor(foreign))
+
+# Distribution
+DHA %>%
+  ggplot(aes(x=DHA, color=MRaceShort, fill=MRaceShort)) +
+    geom_density(alpha=0.6) +
+    viridis::scale_fill_viridis(discrete=TRUE) +
+    viridis::scale_color_viridis(discrete=TRUE) +
+    hrbrthemes::theme_ipsum() +
+    ylab("") +
+    xlab("Assigned Probability (%)")
+
+# Bicor
+bicorAndPvalue(x = DHA$DHA, y = DHA$PM25Trim3, 
+                                 use = "pairwise.complete.obs",
+                                 alternative = "two.sided",
+                                 maxPOutliers = 0.05)
+
+# Association between DHA and covariates
+DHA_lm <- lm(DHA ~ PM25Trim3 + as.factor(sex) + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(meduc) + as.factor(QUINYOST_birth) + as.factor(parity) + relevel(GestWeeks, ref = "term") + as.factor(Method) + relevel(foreign, ref = "0"), data = DHA)
+summary(DHA_lm)
+sjPlot::tab_model(DHA_lm)
+
+# Association between PM25 and covariates
+PM25_lm <- lm(PM25Trim3 ~ as.factor(sex) + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(meduc) + as.factor(QUINYOST_birth) + as.factor(parity) + relevel(GestWeeks, ref = "term") + as.factor(Method) + relevel(foreign, ref = "0"), data = DHA)
+summary(PM25_lm)
+sjPlot::tab_model(PM25_lm)
+
+###################
+# Sensitivity analysis
+###################
+
+# remove preterm birth
+DHA_term <- 
+  DHA %>% dplyr::filter(GestWeeks == "term")
+DHA_lm <- lm(DHA ~ PM25Trim3 + as.factor(sex) + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(meduc) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(Method), data = DHA_term)
+summary(DHA_lm)
+sjPlot::tab_model(DHA_lm)
+
+# Stratified by race
+DHA_race <- 
+  DHA %>% dplyr::filter(MRaceShort == 1)
+
+ggplot(DHA, aes(x=PM25Trim3, y=DHA, color=MRaceShort)) +
+  geom_point()
+
+DHA_lm <- lm(DHA ~ PM25Trim3 + as.factor(sex) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(meduc) + as.factor(QUINYOST_birth) + as.factor(parity) + relevel(GestWeeks, ref = "term") + as.factor(Method), data = DHA_race)
+summary(DHA_lm)
+sjPlot::tab_model(DHA_lm)
+
+# remove PM2.5 outlier
+upper_bound <- quantile(DHA$PM25Trim3, 0.975)
+DHA_noOUT <- 
+  DHA %>%
+  dplyr::filter(PM25Trim3 < upper_bound)
+DHA_lm <- lm(DHA ~ PM25Trim3 + as.factor(sex) + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(meduc) + as.factor(QUINYOST_birth) + as.factor(parity) + relevel(GestWeeks, ref = "term") + as.factor(Method), data = DHA_noOUT)
+summary(DHA_lm)
+sjPlot::tab_model(DHA_lm)
+
+# remove DHA outlier
+lower_bound <- quantile(DHA$DHA, 0.025)
+DHA_noOUT <- 
+  DHA %>%
+  dplyr::filter(DHA > lower_bound)
+DHA_lm <- lm(DHA ~ PM25Trim3 + as.factor(sex) + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(meduc) + as.factor(QUINYOST_birth) + as.factor(parity) + relevel(GestWeeks, ref = "term") + as.factor(Method), data = DHA_noOUT)
+summary(DHA_lm)
+sjPlot::tab_model(DHA_lm)
+
+# my_comparisons <- list(c("0", "1"))
+# ggpubr::ggviolin(DHA, x = "Case_Control_Status", y = "DHA", fill = "Case_Control_Status",
+#          palette = c("#00AFBB", "#E7B800"),
+#          add = "boxplot", add.params = list(fill = "white"))+
+#   stat_compare_means(comparisons = my_comparisons)
+# 
+# my_comparisons <- list(c("1", "2"), c("2", "3"), c("1", "3"))
+# ggpubr::ggviolin(DHA, x = "MRaceShort", y = "DHA", fill = "MRaceShort",
+#          palette = c("#00AFBB", "#E7B800", "#FC4E07"),
+#          add = "boxplot", add.params = list(fill = "white"))+
+#   stat_compare_means(comparisons = my_comparisons)
+
+#####################
+# Check all PUFA
+#####################
+FA_list <- xlsx::read.xlsx("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/DBS_MWAS_AP_results_v3.xlsx", sheetName = "UFA_list")
+FA_list$mz <- round(FA_list$mz,4)
+FA <- linkID_c18neg
+FA$mz <- round(FA$mz, 4)
+FA <- 
+  FA %>%
+  dplyr::filter(FA$mz %in% FA_list$mz) %>%
+  dplyr::add_rownames(var = "met_id")
+FA_list <- cbind(FA$met_id, FA_list)
+
+FA_matrix <-   
+  cbind(C18neg_norm_t_noOUt[,FA_list$`FA$met_id`], class_use_noOUT) %>%
+  dplyr::select(FA_list$`FA$met_id`, Case_Control_Status, sex, MRaceShort, birthyear, MotherAge, meduc, QUINYOST_birth, parity, GestWeeks, Method, foreign, PM25Trim3) %>%
+  drop_na() %>%
+  dplyr::mutate(MRaceShort = as.factor(MRaceShort)) %>%
+  dplyr::mutate(birthyear = as.factor(birthyear)) %>%
+  dplyr::mutate(MotherAge = as.factor(MotherAge)) %>%
+  dplyr::mutate(QUINYOST_birth = as.factor(QUINYOST_birth)) %>%
+  dplyr::mutate(parity = as.factor(parity)) %>%
+  dplyr::mutate(GestWeeks = as.factor(GestWeeks)) %>%
+  dplyr::mutate(Case_Control_Status = as.factor(Case_Control_Status)) %>%
+  dplyr::mutate(sex = as.factor(sex)) %>%
+  dplyr::mutate(meduc = as.factor(meduc)) %>%
+  dplyr::mutate(Method = as.factor(Method)) %>%
+  dplyr::mutate(ratio = met_3588/met_4064) %>%
+  dplyr::mutate(foreign = as.factor(foreign))
+
+# linear regressions
+fit_feature <- lm(data = FA_matrix, as.matrix(FA_matrix[,1:11]) ~ PM25Trim3 + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), na.action = na.exclude)
+fit_feature_summary <- summary(fit_feature)
+
+feature_pvalue <- as.data.frame(t(sapply(fit_feature_summary, function(x)  x$coefficient[2,c(1,4)])))
+rownames(feature_pvalue) <- FA_list$Name
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+
+# N:6/n:3 ratio
+DHA_lm <- lm(ratio ~ PM25Trim3 + as.factor(sex) + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(meduc) + as.factor(QUINYOST_birth) + as.factor(parity) + relevel(GestWeeks, ref = "term") + as.factor(Method) + as.factor(foreign), data = FA_matrix)
+summary(DHA_lm)
+sjPlot::tab_model(DHA_lm)
+
+# Correlation between FAs
+colnames(FA_matrix)[1:11] <- FA_list$Name
+cor_matrix <- cor(FA_matrix[,1:11])
+get_upper_tri <- function(cormat){
+  cormat[lower.tri(cormat)]<- NA
+  return(cormat)
+}
+upper_tri <- get_upper_tri(cor_matrix)
+
+library(reshape2)
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+# Heatmap
+# Height 1400, width 2000
+library(ggplot2)
+ggheatmap <- ggplot(data = melted_cormat, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(low = "#0099CC", high = "#FF3333", mid = "#FFFFFF", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab", 
+                       name="Pearson\nCorrelation") +
+  theme_minimal() +  
+  theme(axis.text.x = element_text(angle = 45, vjust = 1,size = 15, hjust = 1, color = "black"), 
+        axis.text.y = element_text(size = 15, color = "black"),
+        legend.text = element_text(size = 15),
+        legend.title = element_text(size = 20)) + 
+  coord_fixed()
+
+ggheatmap + 
+  geom_text(aes(Var2, Var1, label = round(value,2)), color = "black", size = 6) +
+  theme(
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    axis.ticks = element_blank(),
+    legend.justification = c(1, 0),
+    legend.position = c(-0.3, 0.9),
+    legend.direction = "horizontal") +
+  guides(fill = guide_colorbar(barwidth = 3, barheight = 1,
+                               title.position = "top", title.hjust = -1))
+```
+
+## Cotanine
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_241_WaveICA_AP.RData")
+raw <-
+  xlsx::read.xlsx(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/hydroxycotinine_vs_cotinine.xlsx", sheetIndex = 2) %>%
+  t() %>%
+  as.data.frame()
+Cotinine <-
+  raw[-c(1:2),] %>%
+  rename(cotinine = "V1")
+rownames(Cotinine) <- stringr::str_remove(rownames(Cotinine),".mzXML")
+subsample <-
+  Cotinine[linkSub_use_hilicpos$File.Name,] %>%
+  # dplyr::filter(is.na(cotinine)) %>%
+  add_rownames(var = "File.Name") %>%
+  dplyr::left_join(linkSub_use_hilicpos, by = "File.Name") %>%
+  dplyr::mutate(cotinine = ifelse(is.na(cotinine),0,1))
+  
+subsample <- subsample[order(subsample$Sample.ID),]
+```
+
+## Method 1
+
+## HILICpos
+
+### Feature selection
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+## COTrim3, NOxTrim3, PM25Trim3
+clock <- "PM25Trim3"
+
+X <- HILICpos_norm_t_noOUt[subsample$Sample.ID,]
+X_residual <- HILICpos_residual[subsample$Sample.ID,]
+class_use_noOUT <- class_use_noOUT[which(class_use_noOUT$hilicpos %in% subsample$Sample.ID),]
+class_use_noOUT <- class_use_noOUT[order(class_use_noOUT$hilicpos),]
+Y <- class_use_noOUT[[clock]]
+linkid <- linkID_hilicpos
+
+vip_threshold <- 2
+
+###################################################
+### GLM & corr
+###################################################
+
+feature_w_cov <- cbind(class_use_noOUT, X)
+
+fit_feature <- lm(data = feature_w_cov, as.matrix(feature_w_cov[,735:ncol(feature_w_cov)]) ~ class_use_noOUT[[clock]] + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), na.action = na.exclude)
+fit_feature_summary <- summary(fit_feature)
+
+feature_pvalue <- as.data.frame(t(sapply(fit_feature_summary, function(x)  x$coefficient[2,c(1,4)])))
+rownames(feature_pvalue) <- colnames(X)
+
+# lm_func <- function(x) lm(class_use_noOUT[[clock]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), data = feature_w_cov)
+# 
+# feature_pvalue <- map_dfr(feature_w_cov[,735:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
+
+# feature_pvalue <- cbind(linkid,feature_pvalue)
+# colnames(feature_pvalue) <- c("mz","time","coef","pvalue")
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+feature_pvalue$adjust_pvalue <- p.adjust(feature_pvalue$pvalue, method="BH")
+#
+# pvalue.datExpr <- cbind(feature_pvalue,t(X))
+# pvalue.datExpr <- pvalue.datExpr[order(pvalue.datExpr$pvalue),]
+
+# IN the end not using bicor but pearson correlation
+
+# bicor_result <- bicorAndPvalue(x = X_residual, y = Y, 
+#                                  use = "pairwise.complete.obs", 
+#                                  alternative = "two.sided",
+#                                  maxPOutliers = 0.05)
+bicor_result <- corAndPvalue(x = X_residual, y = Y)
+feature_pvalue$bicor <- bicor_result$cor
+feature_pvalue$bicor_p <- bicor_result$p
+feature_pvalue$bicor_adjp <-p.adjust(bicor_result$p, method="BH")
+
+print(paste("Linear regression:", sum(feature_pvalue$adjust_pvalue <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_adjp <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_p <= 0.05), "features are significant (raw_p<=0.05)", sep = " "))
+
+###################################################
+### PLS
+###################################################
+
+datExpr.pls <- mixOmics::pls(X_residual, Y, ncomp = 10, mode = "regression")
+tune.pls <- mixOmics::perf(datExpr.pls, validation = "Mfold", folds = 10, progressBar = FALSE, auc = TRUE, nrepeat = 1000, cpus = 4)
+
+plot(tune.pls$Q2.total)
+abline(h = 0.0975)
+
+opt_comp <- 4
+
+# select important variables
+vip.pls.datExpr <- vip(datExpr.pls)
+
+# get vip score for all expr features and plot manhattan plots
+vip.for.selection<-as.data.frame(apply(vip.pls.datExpr[,c(1:opt_comp)],1,mean))
+vip.for.selection <- cbind(vip.for.selection,feature_pvalue)
+colnames(vip.for.selection)[1] = "vip"
+
+print(paste("PLS-R:", sum(vip.for.selection$vip >=2), "features are significant (VIP>=2)", sep = " "))
+
+vip.for.selection <- cbind(linkid,vip.for.selection)
+vip.for.selection$group[vip.for.selection$vip < vip_threshold] <- 0
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor <= 0] <- 1 ## down
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor > 0] <- 2  ## up
+
+ggplot2::ggplot(vip.for.selection,aes(x=mz,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$mz, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="M/Z",y="VIP Score")
+
+ggplot2::ggplot(vip.for.selection,aes(x=time,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$time, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="Retention Time",y="VIP Score")
+
+# Using significant features
+
+# good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold & bicor_p < 0.05)
+good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold)
+
+print(paste("Combined:", nrow(good_feats_ordered), "features are significant (VIP>=2 & Pearson cor Raw_P<=0.05)", sep = " "))
+
+good_feats_ordered.name <- {}
+for (i in 1:nrow(good_feats_ordered)) {
+  good_feats_ordered.name <- c(good_feats_ordered.name,which(colnames(X)==row.names(good_feats_ordered[i,])))
+}
+sig.X <- X[,c(good_feats_ordered.name)]
+
+# Save files
+save.plsresults.allfeatures <- cbind(vip.for.selection,t(X))
+# good_feats_ordered$rank <- 1:nrow(good_feats_ordered)
+save.plsresults.sigfeatures <- cbind(good_feats_ordered,t(sig.X))
+
+print(paste("Number of significant features:",nrow(save.plsresults.sigfeatures),sep = " "))
+```
+
+### Annotation
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+annotation <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/xMSannotator_Stage4.csv", header = T)
+annotation <- annotation[which(annotation$Confidence >= 2),] ## only confidence score greater than 2
+
+annotation$mz <- round(annotation$mz, 4)
+annotation$time <- round(annotation$time, 1)
+save.plsresults.sigfeatures$mz <- round(save.plsresults.sigfeatures$mz, 4)
+save.plsresults.sigfeatures$time <- round(save.plsresults.sigfeatures$time, 1)
+
+save.annotation <- merge(save.plsresults.sigfeatures[,1:9], annotation, by = c("mz", "time"), all.x = T)
+
+######################
+# In-house library
+######################
+
+library(xlsx)
+
+tolerance = 5
+
+HILIC_library <- read.xlsx(file = "/Users/qiyan/Dropbox/PEG/PD_Pest_MultiOmics/Raw_Data/InHouse_Library_Emory/Combined_comfirmed_metabolite_list_08032020.xlsx", 1, header = T)
+
+linkID_hilicpos$delta_mz = (tolerance) * (linkID_hilicpos$mz/1e+06)
+linkID_hilicpos$min_mz = linkID_hilicpos$mz - linkID_hilicpos$delta_mz
+linkID_hilicpos$max_mz = linkID_hilicpos$mz + linkID_hilicpos$delta_mz
+
+HILIC_verify <- data.frame()
+for(i in 1:nrow(linkID_hilicpos)){
+  rownum <- which(HILIC_library$mz >= linkID_hilicpos$min_mz[i] & HILIC_library$mz <= linkID_hilicpos$max_mz[i])
+  if (length(rownum)!=0){
+    temp <- cbind(linkID_hilicpos[i,],HILIC_library[rownum,])
+    HILIC_verify <- rbind(HILIC_verify, temp)
+  }
+  rm(temp)
+}
+
+HILIC_verify <- HILIC_verify[,c(1,2,12,13,8,6,7)]
+colnames(HILIC_verify) <- c("mz","time","mz_library","time_library","Name","KEGGID","HMDBID")
+
+# write.table(HILIC_verify, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/HILIC_verified_features.txt", sep = "\t", row.names = F,quote = F)
+
+HILIC_verify$mz <- round(HILIC_verify$mz, 4)
+HILIC_verify$time <- round(HILIC_verify$time, 1)
+
+save.annotation <- merge(save.annotation, HILIC_verify[,c(1,2,3,4,6,7)], by = c("mz", "time"), all.x = T)
+```
+
+### Mummichog
+
+Use PLSR VIP >= 2 and Pearson correlaiton raw P-value <= 0.05 as the threshold.
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+###################################################
+### Prepare for mummichog
+###################################################
+
+save.mummichog_PLS_VIP2 <- save.plsresults.allfeatures[,c(1:4,7,8)]
+save.mummichog_PLS_VIP2$"p-value" = 0.051
+
+# save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold&save.mummichog_PLS_VIP2$`pvalue.datExpr$pvalue`<pvalue_threshold] <- 0.04
+save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <- 0.04
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,7,5)]
+
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/cotinine_HILICpos_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
+write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/cotinine_HILICpos_MWAS_result.RData", sep = ""))
+```
+
+## C18neg
+
+### Feature selection
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_241_WaveICA_AP.RData")
+
+## COTrim3, NOxTrim3, PM25Trim3
+clock <- "PM25Trim3"
+
+X <- C18neg_norm_t_noOUt[subsample$Sample.ID,]
+X_residual <- C18neg_residual[subsample$Sample.ID,]
+class_use_noOUT <- class_use_noOUT[which(class_use_noOUT$c18neg %in% subsample$Sample.ID),]
+class_use_noOUT <- class_use_noOUT[order(class_use_noOUT$c18neg),]
+Y <- class_use_noOUT[[clock]]
+linkid <- linkID_c18neg
+
+vip_threshold <- 2
+
+###################################################
+### GLM & corr
+###################################################
+
+feature_w_cov <- cbind(class_use_noOUT, X)
+
+fit_feature <- lm(data = feature_w_cov, as.matrix(feature_w_cov[,735:ncol(feature_w_cov)]) ~ class_use_noOUT[[clock]] + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), na.action = na.exclude)
+fit_feature_summary <- summary(fit_feature)
+
+feature_pvalue <- as.data.frame(t(sapply(fit_feature_summary, function(x)  x$coefficient[2,c(1,4)])))
+rownames(feature_pvalue) <- colnames(X)
+
+# lm_func <- function(x) lm(class_use_noOUT[[clock]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), data = feature_w_cov)
+# 
+# feature_pvalue <- map_dfr(feature_w_cov[,735:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
+
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+feature_pvalue$adjust_pvalue <- p.adjust(feature_pvalue$pvalue, method="BH")
+
+# bicor_result <- corAndPvalue(x = X_residual, y = Y)
+bicor_result <- bicorAndPvalue(x = X_residual, y = Y, use = "pairwise.complete.obs", alternative = "two.sided", maxPOutliers = 0.05)
+feature_pvalue$bicor <- bicor_result$bicor
+feature_pvalue$bicor_p <- bicor_result$p
+feature_pvalue$bicor_adjp <-p.adjust(bicor_result$p, method="BH")
+
+print(paste("Linear regression:", sum(feature_pvalue$adjust_pvalue <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_adjp <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_p <= 0.05), "features are significant (raw_p<=0.05)", sep = " "))
+
+###################################################
+### PLS
+###################################################
+
+datExpr.pls <- mixOmics::pls(X_residual, Y, ncomp = 10, mode = "regression")
+tune.pls <- mixOmics::perf(datExpr.pls, validation = "Mfold", folds = 10, progressBar = FALSE, auc = TRUE, nrepeat = 1000, cpus = 4)
+
+plot(tune.pls$Q2.total)
+abline(h = 0.0975)
+
+opt_comp <- 4
+
+# select important variables
+vip.pls.datExpr <- vip(datExpr.pls)
+
+# get vip score for all expr features and plot manhattan plots
+vip.for.selection<-as.data.frame(apply(vip.pls.datExpr[,c(1:opt_comp)],1,mean))
+vip.for.selection <- cbind(vip.for.selection,feature_pvalue)
+colnames(vip.for.selection)[1] = "vip"
+
+print(paste("PLS-R:", sum(vip.for.selection$vip >=2), "features are significant (VIP>=2)", sep = " "))
+
+vip.for.selection <- cbind(linkid,vip.for.selection)
+vip.for.selection$group[vip.for.selection$vip < vip_threshold] <- 0
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor <= 0] <- 1 ## down
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor > 0] <- 2  ## up
+
+ggplot2::ggplot(vip.for.selection,aes(x=mz,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$mz, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="M/Z",y="VIP Score")
+
+ggplot2::ggplot(vip.for.selection,aes(x=time,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$time, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="Retention Time",y="VIP Score")
+
+# Using significant features
+# good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold & bicor_p < 0.05)
+good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold)
+
+print(paste("Combined:", nrow(good_feats_ordered), "features are significant (VIP>=2 & Pearson cor Raw_P<=0.05)", sep = " "))
+
+good_feats_ordered.name <- {}
+for (i in 1:nrow(good_feats_ordered)) {
+  good_feats_ordered.name <- c(good_feats_ordered.name,which(colnames(X)==row.names(good_feats_ordered[i,])))
+}
+sig.X <- X[,c(good_feats_ordered.name)]
+
+# Save files
+save.plsresults.allfeatures <- cbind(vip.for.selection,t(X))
+# good_feats_ordered$rank <- 1:nrow(good_feats_ordered)
+save.plsresults.sigfeatures <- cbind(good_feats_ordered,t(sig.X))
+
+print(paste("Number of significant features:",nrow(save.plsresults.sigfeatures),sep = " "))
+```
+
+
+### Annotation
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+annotation <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/xMSannotator_Stage4.csv", header = T)
+annotation <- annotation[which(annotation$Confidence >= 2),] ## only confidence score greater than 2
+
+annotation$mz <- round(annotation$mz, 4)
+annotation$time <- round(annotation$time, 1)
+save.plsresults.sigfeatures$mz <- round(save.plsresults.sigfeatures$mz, 4)
+save.plsresults.sigfeatures$time <- round(save.plsresults.sigfeatures$time, 1)
+
+save.annotation <- merge(save.plsresults.sigfeatures[,1:9], annotation, by = c("mz", "time"), all.x = T)
+
+######################
+# In-house library
+######################
+
+library(xlsx)
+
+tolerance = 5
+
+C18_library <- read.xlsx(file = "/Users/qiyan/Dropbox/PEG/PD_Pest_MultiOmics/Raw_Data/InHouse_Library_Emory/Combined_comfirmed_metabolite_list_08032020.xlsx", 2, header = T)
+
+linkID_c18neg$delta_mz = (tolerance) * (linkID_c18neg$mz/1e+06)
+linkID_c18neg$min_mz = linkID_c18neg$mz - linkID_c18neg$delta_mz
+linkID_c18neg$max_mz = linkID_c18neg$mz + linkID_c18neg$delta_mz
+
+C18_verify <- data.frame()
+for(i in 1:nrow(linkID_c18neg)){
+  rownum <- which(C18_library$mz >= linkID_c18neg$min_mz[i] & C18_library$mz <= linkID_c18neg$max_mz[i])
+  if (length(rownum)!=0){
+    temp <- cbind(linkID_c18neg[i,],C18_library[rownum,])
+    C18_verify <- rbind(C18_verify, temp)
+  }
+  rm(temp)
+}
+
+C18_verify <- C18_verify[,c(1,2,12,13,8,6,7)]
+colnames(C18_verify) <- c("mz","time","mz_library","time_library","Name","KEGGID","HMDBID")
+
+# write.table(C18_verify, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/C18_verified_features.txt", sep = "\t", row.names = F,quote = F)
+
+C18_verify$mz <- round(C18_verify$mz, 4)
+C18_verify$time <- round(C18_verify$time, 1)
+
+save.annotation <- merge(save.annotation, C18_verify[,c(1,2,3,4,6,7)], by = c("mz", "time"), all.x = T)
+```
+
+### Mummichog
+
+Use PLSR VIP >= 2 and Pearson correlaiton raw P-value <= 0.05 as the threshold.
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+###################################################
+### Prepare for mummichog
+###################################################
+
+save.mummichog_PLS_VIP2 <- save.plsresults.allfeatures[,c(1:4,7,8)]
+save.mummichog_PLS_VIP2$"p-value" = 0.051
+
+# save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold&save.mummichog_PLS_VIP2$`pvalue.datExpr$pvalue`<pvalue_threshold] <- 0.04
+save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <- 0.04
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,7,5)]
+
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/cotinine_C18neg_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
+write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/cotinine_C18neg_MWAS_result.RData", sep = ""))
+```
+
+## Method 2
+
+## HILICpos
+
+### Feature selection
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+## Link covariates with features
+class_use_noOUT <- class_use_noOUT %>%
+  left_join(subsample[,c(4,2)], by = c("hilicpos" = "Sample.ID"))
+
+HILICpos_feature_w_cov <- cbind(class_use_noOUT,HILICpos_norm_t_noOUt)
+
+fit_feature <- lm(data = HILICpos_feature_w_cov, as.matrix(HILICpos_feature_w_cov[,736:ncol(HILICpos_feature_w_cov)]) ~ as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(cotinine), na.action = na.exclude)
+
+residual_feature <- as.matrix(residuals(fit_feature),nrow = dim(HILICpos_feature_w_cov)[1])
+save_residual <- as.data.frame(residual_feature)
+rownames(save_residual) <- rownames(HILICpos_norm_t_noOUt)
+HILICpos_residual <- save_residual; rm(save_residual, residual_feature, fit_feature)
+sum(is.na(HILICpos_residual))
+
+C18neg_feature_w_cov <- cbind(class_use_noOUT,C18neg_norm_t_noOUt)
+
+fit_feature <- lm(data = C18neg_feature_w_cov, as.matrix(C18neg_feature_w_cov[,736:ncol(C18neg_feature_w_cov)]) ~ as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(cotinine), na.action = na.exclude)
+residual_feature <- as.matrix(residuals(fit_feature),nrow = dim(C18neg_feature_w_cov)[1])
+save_residual <- as.data.frame(residual_feature)
+rownames(save_residual) <- rownames(C18neg_norm_t_noOUt)
+C18neg_residual <- save_residual; rm(save_residual, residual_feature, fit_feature)
+sum(is.na(C18neg_residual))
+
+## COTrim3, NOxTrim3, PM25Trim3
+clock <- "PM25Trim3"
+
+X <- HILICpos_norm_t_noOUt
+X_residual <- HILICpos_residual
+Y <- class_use_noOUT[[clock]]
+linkid <- linkID_hilicpos
+
+vip_threshold <- 2
+
+###################################################
+### GLM & corr
+###################################################
+
+feature_w_cov <- cbind(class_use_noOUT, X)
+
+fit_feature <- lm(data = feature_w_cov, as.matrix(feature_w_cov[,736:ncol(feature_w_cov)]) ~ class_use_noOUT[[clock]] + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(cotinine), na.action = na.exclude)
+fit_feature_summary <- summary(fit_feature)
+
+feature_pvalue <- as.data.frame(t(sapply(fit_feature_summary, function(x)  x$coefficient[2,c(1,4)])))
+rownames(feature_pvalue) <- colnames(X)
+
+# lm_func <- function(x) lm(class_use_noOUT[[clock]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), data = feature_w_cov)
+# 
+# feature_pvalue <- map_dfr(feature_w_cov[,735:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
+
+# feature_pvalue <- cbind(linkid,feature_pvalue)
+# colnames(feature_pvalue) <- c("mz","time","coef","pvalue")
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+feature_pvalue$adjust_pvalue <- p.adjust(feature_pvalue$pvalue, method="BH")
+#
+# pvalue.datExpr <- cbind(feature_pvalue,t(X))
+# pvalue.datExpr <- pvalue.datExpr[order(pvalue.datExpr$pvalue),]
+
+# IN the end not using bicor but pearson correlation
+
+# bicor_result <- bicorAndPvalue(x = X_residual, y = Y, 
+#                                  use = "pairwise.complete.obs", 
+#                                  alternative = "two.sided",
+#                                  maxPOutliers = 0.05)
+bicor_result <- corAndPvalue(x = X_residual, y = Y)
+feature_pvalue$bicor <- bicor_result$cor
+feature_pvalue$bicor_p <- bicor_result$p
+feature_pvalue$bicor_adjp <-p.adjust(bicor_result$p, method="BH")
+
+print(paste("Linear regression:", sum(feature_pvalue$adjust_pvalue <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_adjp <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_p <= 0.05), "features are significant (raw_p<=0.05)", sep = " "))
+
+###################################################
+### PLS
+###################################################
+
+datExpr.pls <- mixOmics::pls(X_residual, Y, ncomp = 10, mode = "regression")
+tune.pls <- mixOmics::perf(datExpr.pls, validation = "Mfold", folds = 10, progressBar = FALSE, auc = TRUE, nrepeat = 1000, cpus = 4)
+
+plot(tune.pls$Q2.total)
+abline(h = 0.0975)
+
+opt_comp <- 4
+
+# select important variables
+vip.pls.datExpr <- vip(datExpr.pls)
+
+# get vip score for all expr features and plot manhattan plots
+vip.for.selection<-as.data.frame(apply(vip.pls.datExpr[,c(1:opt_comp)],1,mean))
+vip.for.selection <- cbind(vip.for.selection,feature_pvalue)
+colnames(vip.for.selection)[1] = "vip"
+
+print(paste("PLS-R:", sum(vip.for.selection$vip >=2), "features are significant (VIP>=2)", sep = " "))
+
+vip.for.selection <- cbind(linkid,vip.for.selection)
+vip.for.selection$group[vip.for.selection$vip < vip_threshold] <- 0
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor <= 0] <- 1 ## down
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor > 0] <- 2  ## up
+
+ggplot2::ggplot(vip.for.selection,aes(x=mz,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$mz, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="M/Z",y="VIP Score")
+
+ggplot2::ggplot(vip.for.selection,aes(x=time,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$time, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="Retention Time",y="VIP Score")
+
+# Using significant features
+
+# good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold & bicor_p < 0.05)
+good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold)
+
+print(paste("Combined:", nrow(good_feats_ordered), "features are significant (VIP>=2 & Pearson cor Raw_P<=0.05)", sep = " "))
+
+good_feats_ordered.name <- {}
+for (i in 1:nrow(good_feats_ordered)) {
+  good_feats_ordered.name <- c(good_feats_ordered.name,which(colnames(X)==row.names(good_feats_ordered[i,])))
+}
+sig.X <- X[,c(good_feats_ordered.name)]
+
+# Save files
+save.plsresults.allfeatures <- cbind(vip.for.selection,t(X))
+# good_feats_ordered$rank <- 1:nrow(good_feats_ordered)
+save.plsresults.sigfeatures <- cbind(good_feats_ordered,t(sig.X))
+
+print(paste("Number of significant features:",nrow(save.plsresults.sigfeatures),sep = " "))
+```
+
+### Annotation
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+annotation <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/xMSannotator_Stage4.csv", header = T)
+annotation <- annotation[which(annotation$Confidence >= 2),] ## only confidence score greater than 2
+
+annotation$mz <- round(annotation$mz, 4)
+annotation$time <- round(annotation$time, 1)
+save.plsresults.sigfeatures$mz <- round(save.plsresults.sigfeatures$mz, 4)
+save.plsresults.sigfeatures$time <- round(save.plsresults.sigfeatures$time, 1)
+
+save.annotation <- merge(save.plsresults.sigfeatures[,1:9], annotation, by = c("mz", "time"), all.x = T)
+
+######################
+# In-house library
+######################
+
+library(xlsx)
+
+tolerance = 5
+
+HILIC_library <- read.xlsx(file = "/Users/qiyan/Dropbox/PEG/PD_Pest_MultiOmics/Raw_Data/InHouse_Library_Emory/Combined_comfirmed_metabolite_list_08032020.xlsx", 1, header = T)
+
+linkID_hilicpos$delta_mz = (tolerance) * (linkID_hilicpos$mz/1e+06)
+linkID_hilicpos$min_mz = linkID_hilicpos$mz - linkID_hilicpos$delta_mz
+linkID_hilicpos$max_mz = linkID_hilicpos$mz + linkID_hilicpos$delta_mz
+
+HILIC_verify <- data.frame()
+for(i in 1:nrow(linkID_hilicpos)){
+  rownum <- which(HILIC_library$mz >= linkID_hilicpos$min_mz[i] & HILIC_library$mz <= linkID_hilicpos$max_mz[i])
+  if (length(rownum)!=0){
+    temp <- cbind(linkID_hilicpos[i,],HILIC_library[rownum,])
+    HILIC_verify <- rbind(HILIC_verify, temp)
+  }
+  rm(temp)
+}
+
+HILIC_verify <- HILIC_verify[,c(1,2,12,13,8,6,7)]
+colnames(HILIC_verify) <- c("mz","time","mz_library","time_library","Name","KEGGID","HMDBID")
+
+# write.table(HILIC_verify, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/HILIC_verified_features.txt", sep = "\t", row.names = F,quote = F)
+
+HILIC_verify$mz <- round(HILIC_verify$mz, 4)
+HILIC_verify$time <- round(HILIC_verify$time, 1)
+
+save.annotation <- merge(save.annotation, HILIC_verify[,c(1,2,3,4,6,7)], by = c("mz", "time"), all.x = T)
+```
+
+### Mummichog
+
+Use PLSR VIP >= 2 and Pearson correlaiton raw P-value <= 0.05 as the threshold.
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+###################################################
+### Prepare for mummichog
+###################################################
+
+save.mummichog_PLS_VIP2 <- save.plsresults.allfeatures[,c(1:4,7,8)]
+save.mummichog_PLS_VIP2$"p-value" = 0.051
+
+# save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold&save.mummichog_PLS_VIP2$`pvalue.datExpr$pvalue`<pvalue_threshold] <- 0.04
+save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <- 0.04
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,7,5)]
+
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/cotinine2_HILICpos_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
+write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/cotinine2_HILICpos_MWAS_result.RData", sep = ""))
+```
+
+## C18neg
+
+### Feature selection
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_241_WaveICA_AP.RData")
+
+## COTrim3, NOxTrim3, PM25Trim3
+clock <- "PM25Trim3"
+
+X <- C18neg_norm_t_noOUt
+X_residual <- C18neg_residual
+Y <- class_use_noOUT[[clock]]
+linkid <- linkID_c18neg
+
+vip_threshold <- 2
+
+###################################################
+### GLM & corr
+###################################################
+
+feature_w_cov <- cbind(class_use_noOUT, X)
+
+fit_feature <- lm(data = feature_w_cov, as.matrix(feature_w_cov[,736:ncol(feature_w_cov)]) ~ class_use_noOUT[[clock]] + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(cotinine), na.action = na.exclude)
+fit_feature_summary <- summary(fit_feature)
+
+feature_pvalue <- as.data.frame(t(sapply(fit_feature_summary, function(x)  x$coefficient[2,c(1,4)])))
+rownames(feature_pvalue) <- colnames(X)
+
+# lm_func <- function(x) lm(class_use_noOUT[[clock]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks), data = feature_w_cov)
+# 
+# feature_pvalue <- map_dfr(feature_w_cov[,735:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
+
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+feature_pvalue$adjust_pvalue <- p.adjust(feature_pvalue$pvalue, method="BH")
+
+# bicor_result <- corAndPvalue(x = X_residual, y = Y)
+bicor_result <- bicorAndPvalue(x = X_residual, y = Y, use = "pairwise.complete.obs", alternative = "two.sided", maxPOutliers = 0.05)
+feature_pvalue$bicor <- bicor_result$bicor
+feature_pvalue$bicor_p <- bicor_result$p
+feature_pvalue$bicor_adjp <-p.adjust(bicor_result$p, method="BH")
+
+print(paste("Linear regression:", sum(feature_pvalue$adjust_pvalue <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_adjp <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+print(paste("Pearson correlation:", sum(feature_pvalue$bicor_p <= 0.05), "features are significant (raw_p<=0.05)", sep = " "))
+
+###################################################
+### PLS
+###################################################
+
+datExpr.pls <- mixOmics::pls(X_residual, Y, ncomp = 10, mode = "regression")
+tune.pls <- mixOmics::perf(datExpr.pls, validation = "Mfold", folds = 10, progressBar = FALSE, auc = TRUE, nrepeat = 1000, cpus = 4)
+
+plot(tune.pls$Q2.total)
+abline(h = 0.0975)
+
+opt_comp <- 4
+
+# select important variables
+vip.pls.datExpr <- vip(datExpr.pls)
+
+# get vip score for all expr features and plot manhattan plots
+vip.for.selection<-as.data.frame(apply(vip.pls.datExpr[,c(1:opt_comp)],1,mean))
+vip.for.selection <- cbind(vip.for.selection,feature_pvalue)
+colnames(vip.for.selection)[1] = "vip"
+
+print(paste("PLS-R:", sum(vip.for.selection$vip >=2), "features are significant (VIP>=2)", sep = " "))
+
+vip.for.selection <- cbind(linkid,vip.for.selection)
+vip.for.selection$group[vip.for.selection$vip < vip_threshold] <- 0
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor <= 0] <- 1 ## down
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$bicor > 0] <- 2  ## up
+
+ggplot2::ggplot(vip.for.selection,aes(x=mz,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$mz, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="M/Z",y="VIP Score")
+
+ggplot2::ggplot(vip.for.selection,aes(x=time,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE,cex=4) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$time, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 35)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=35, face="bold"),
+        axis.title.x = element_text(size=35, face="bold"),
+        axis.title.y = element_text(size=35, face="bold"))+
+  labs(x="Retention Time",y="VIP Score")
+
+# Using significant features
+# good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold & bicor_p < 0.05)
+good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold)
+
+print(paste("Combined:", nrow(good_feats_ordered), "features are significant (VIP>=2 & Pearson cor Raw_P<=0.05)", sep = " "))
+
+good_feats_ordered.name <- {}
+for (i in 1:nrow(good_feats_ordered)) {
+  good_feats_ordered.name <- c(good_feats_ordered.name,which(colnames(X)==row.names(good_feats_ordered[i,])))
+}
+sig.X <- X[,c(good_feats_ordered.name)]
+
+# Save files
+save.plsresults.allfeatures <- cbind(vip.for.selection,t(X))
+# good_feats_ordered$rank <- 1:nrow(good_feats_ordered)
+save.plsresults.sigfeatures <- cbind(good_feats_ordered,t(sig.X))
+
+print(paste("Number of significant features:",nrow(save.plsresults.sigfeatures),sep = " "))
+```
+
+### Annotation
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+annotation <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/xMSannotator_Stage4.csv", header = T)
+annotation <- annotation[which(annotation$Confidence >= 2),] ## only confidence score greater than 2
+
+annotation$mz <- round(annotation$mz, 4)
+annotation$time <- round(annotation$time, 1)
+save.plsresults.sigfeatures$mz <- round(save.plsresults.sigfeatures$mz, 4)
+save.plsresults.sigfeatures$time <- round(save.plsresults.sigfeatures$time, 1)
+
+save.annotation <- merge(save.plsresults.sigfeatures[,1:9], annotation, by = c("mz", "time"), all.x = T)
+
+######################
+# In-house library
+######################
+
+library(xlsx)
+
+tolerance = 5
+
+C18_library <- read.xlsx(file = "/Users/qiyan/Dropbox/PEG/PD_Pest_MultiOmics/Raw_Data/InHouse_Library_Emory/Combined_comfirmed_metabolite_list_08032020.xlsx", 2, header = T)
+
+linkID_c18neg$delta_mz = (tolerance) * (linkID_c18neg$mz/1e+06)
+linkID_c18neg$min_mz = linkID_c18neg$mz - linkID_c18neg$delta_mz
+linkID_c18neg$max_mz = linkID_c18neg$mz + linkID_c18neg$delta_mz
+
+C18_verify <- data.frame()
+for(i in 1:nrow(linkID_c18neg)){
+  rownum <- which(C18_library$mz >= linkID_c18neg$min_mz[i] & C18_library$mz <= linkID_c18neg$max_mz[i])
+  if (length(rownum)!=0){
+    temp <- cbind(linkID_c18neg[i,],C18_library[rownum,])
+    C18_verify <- rbind(C18_verify, temp)
+  }
+  rm(temp)
+}
+
+C18_verify <- C18_verify[,c(1,2,12,13,8,6,7)]
+colnames(C18_verify) <- c("mz","time","mz_library","time_library","Name","KEGGID","HMDBID")
+
+# write.table(C18_verify, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/C18_verified_features.txt", sep = "\t", row.names = F,quote = F)
+
+C18_verify$mz <- round(C18_verify$mz, 4)
+C18_verify$time <- round(C18_verify$time, 1)
+
+save.annotation <- merge(save.annotation, C18_verify[,c(1,2,3,4,6,7)], by = c("mz", "time"), all.x = T)
+```
+
+### Mummichog
+
+Use PLSR VIP >= 2 and Pearson correlaiton raw P-value <= 0.05 as the threshold.
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+###################################################
+### Prepare for mummichog
+###################################################
+
+save.mummichog_PLS_VIP2 <- save.plsresults.allfeatures[,c(1:4,7,8)]
+save.mummichog_PLS_VIP2$"p-value" = 0.051
+
+# save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold&save.mummichog_PLS_VIP2$`pvalue.datExpr$pvalue`<pvalue_threshold] <- 0.04
+save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <- 0.04
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,7,5)]
+
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/cotinine2_C18neg_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
+write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/",clock,"/cotinine2_C18neg_MWAS_result.RData", sep = ""))
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/PM25Trim3/cotinine2_HILICpos_MWAS_result.RData")
+cotinine <- rownames(save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/PM25Trim3/HILICpos_MWAS_result.RData")
+all <- rownames(save.plsresults.sigfeatures)
+
+length(intersect(cotinine, all))
+
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/PM25Trim3/cotinine2_C18neg_MWAS_result.RData")
+cotinine <- rownames(save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/PM25Trim3/C18neg_MWAS_result.RData")
+all <- rownames(save.plsresults.sigfeatures)
+
+length(intersect(cotinine, all))
+```
