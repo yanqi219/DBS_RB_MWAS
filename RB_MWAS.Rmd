@@ -1,0 +1,305 @@
+---
+title: "RB_MWAS_AP"
+author: "Qi Yan"
+date: "04/22/2021"
+output: 
+  html_document:
+    toc: TRUE # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    toc_float: true
+    number_sections: FALSE
+    theme: united  
+    highlight: tango
+    df_print: paged
+    code_folding: show
+---
+
+<style type="text/css">
+
+.main-container {
+  max-width: 2200px;
+  margin-left: auto;
+  margin-right: auto;
+}
+body{ /* Normal  */
+      font-size: 16px;
+  }
+h1.title {
+  color: DarkRed;
+}
+h1 { /* Header 1 */
+  color: DarkBlue;
+}
+h2 { /* Header 2 */
+  color: DarkBlue;
+}
+h3 { /* Header 3 */
+  color: DarkBlue;
+}
+  
+</style>
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(sas7bdat)
+library(WGCNA)
+library(tidyverse)
+library(xlsx)
+library(qqman)
+# library(ggbiplot)
+library(ggpubr)
+library(doParallel)
+library(RColorBrewer)
+library(sqldf)
+library(glmnet)
+library(caret)
+library(impute)
+library(limma)
+library(mixOmics)
+library(MetabNet)
+library(magrittr)
+library(dendextend)
+library(zoo)
+library(WaveICA)
+library(stringr)
+
+options(stringsAsFactors = FALSE)
+allowWGCNAThreads()
+```
+
+# Prepare data
+
+**Covariates**
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# Covariates
+Subject_data <- read.sas7bdat(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/rb_dbs.sas7bdat")
+dim(Subject_data)
+
+# Number of cases and controls
+table(Subject_data$Case_Control_Status)
+
+# Add metabolomics sample id back
+Subject_data <- Subject_data[order(Subject_data$ccapid),]
+Subject_data$ccapid <- paste("S", Subject_data$ccapid, sep = "")
+
+RB_Case_Control_Link <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/RB_Case_Control_Link.csv", header = T)
+dim(RB_Case_Control_Link)
+table(RB_Case_Control_Link$Retinoblastoma) # there's a duplicate control, remove it
+RB_Case_Control_Link <- 
+  RB_Case_Control_Link %>%
+    distinct(ccapid, .keep_all = TRUE)
+
+RB_Case_Control_Link$ccapid <- paste("S", RB_Case_Control_Link$ccapid, sep = "")
+Subject_data <- dplyr::left_join(Subject_data, RB_Case_Control_Link, by = "ccapid", all = F)
+
+# Linked rb_dbs.sas7bdat w/ RB_Case_Control_Link.csv, 8 participants don't have sampleID
+RB_Case_Control_Link[which(RB_Case_Control_Link$c18neg == "#N/A"),]
+```
+
+**Metabolomic data**
+
+Prepare data for Notame
+
+https://github.com/antonvsdata/notame/blob/master/vignettes/Data_input.png
+https://www.mdpi.com/2218-1989/10/4/135/htm
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# HILICpos
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/DBS_hilicpos_1602_raw.RData")
+linkSub_hilic_RB <- 
+  linkSub_hilic %>%
+  dplyr::left_join(RB_Case_Control_Link, by = c("Sample.ID" = "Barcode")) %>%
+  dplyr::mutate(type = ifelse(Unilateral == 1, "Unilateral", NA))
+linkSub_hilic_RB$type[which(linkSub_hilic_RB$Bilateral==1)] <- "Bilateral"
+linkSub_hilic_RB <- 
+  linkSub_hilic_RB %>%
+  dplyr::mutate(Retinoblastoma = ifelse(class == "QC", "QC", Retinoblastoma)) %>%
+  dplyr::mutate(Retinoblastoma = ifelse(Retinoblastoma == 0, "Control", Retinoblastoma)) %>%
+  dplyr::mutate(Retinoblastoma = ifelse(Retinoblastoma == 1, type, Retinoblastoma)) %>%
+  dplyr::filter(!is.na(Retinoblastoma))
+linkSub_hilic_RB <- 
+  linkSub_hilic_RB %>%
+  dplyr::mutate(injection.order = 1:nrow(linkSub_hilic_RB))
+
+HILICpos <- 
+  HILICpos %>%
+  dplyr::mutate(Compound = 1:nrow(HILICpos)) %>%
+  dplyr::mutate(Column = "HILIC") %>%
+  dplyr::mutate(Ion_Mode = "POS") %>%
+  dplyr::rename("Mass" = "mz") %>%
+  dplyr::rename("RT" = "time")
+HILICpos <- HILICpos[,c("Compound", "Mass", "RT", "Column", "Ion_Mode", linkSub_hilic_RB$Sample.ID)]
+
+write.csv(HILICpos, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/HILICpos_met_matrix.csv", row.names = F, col.names = T, quote = F)
+write.csv(linkSub_hilic_RB, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/HILICpos_link.csv", row.names = F, col.names = T, quote = F)
+
+# C18neg
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/DBS_c18neg_1602_raw.RData")
+linkSub_c18_RB <- 
+  linkSub_c18 %>%
+  dplyr::left_join(RB_Case_Control_Link, by = c("Sample.ID" = "Barcode")) %>%
+  dplyr::mutate(type = ifelse(Unilateral == 1, "Unilateral", NA))
+linkSub_c18_RB$type[which(linkSub_c18_RB$Bilateral==1)] <- "Bilateral"
+linkSub_c18_RB <- 
+  linkSub_c18_RB %>%
+  dplyr::mutate(Retinoblastoma = ifelse(class == "QC", "QC", Retinoblastoma)) %>%
+  dplyr::mutate(Retinoblastoma = ifelse(Retinoblastoma == 0, "Control", Retinoblastoma)) %>%
+  dplyr::mutate(Retinoblastoma = ifelse(Retinoblastoma == 1, type, Retinoblastoma)) %>%
+  dplyr::filter(!is.na(Retinoblastoma))
+linkSub_c18_RB <- 
+  linkSub_c18_RB %>%
+  dplyr::mutate(injection.order = 1:nrow(linkSub_c18_RB))
+
+C18neg <- 
+  C18neg %>%
+  dplyr::mutate(Compound = 1:nrow(C18neg)) %>%
+  dplyr::mutate(Column = "RP") %>%
+  dplyr::mutate(Ion_Mode = "NEG") %>%
+  dplyr::rename("Mass" = "mz") %>%
+  dplyr::rename("RT" = "time")
+C18neg <- C18neg[,c("Compound", "Mass", "RT", "Column", "Ion_Mode", linkSub_c18_RB$Sample.ID)]
+
+write.csv(C18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/C18neg_met_matrix.csv", row.names = F, col.names = T, quote = F)
+write.csv(linkSub_c18_RB, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/C18neg_link.csv", row.names = F, col.names = T, quote = F)
+```
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/DBS_hilicpos_1602_raw.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/DBS_c18neg_1602_raw.RData")
+
+write.csv(HILICpos, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/HILICpos_met_matrix.csv", row.names = F, col.names = T, quote = F)
+write.csv(linkSub_hilic, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/HILICpos_link.csv", row.names = F, col.names = T, quote = F)
+##################
+# Study population - Controls
+##################
+
+# HILIC
+## generate datasets for AP MWAS
+overlap <- intersect(Subject_data$hilicpos, linkSub_hilic$Sample.ID)
+## RB_Case_Control_Link.csv and DBS_hilicpos_1602_raw.RData has 1390 overlapped participants?
+
+HILICpos_use <- HILICpos[,which(colnames(HILICpos) %in% c("mz", "time", overlap))]
+linkSub_use <- linkSub_hilic[which(linkSub_hilic$Sample.ID %in% overlap),]
+class_use <- Subject_data[which(Subject_data$hilicpos %in% overlap),]
+
+rownames(HILICpos_use) <- paste("met_",1:nrow(HILICpos_use),sep = "")
+linkID <- HILICpos_use[,1:2]
+HILICpos_use <- HILICpos_use[,-c(1,2)]
+
+table(class_use$Case_Control_Status)
+
+save(HILICpos_use, linkSub_use, class_use, linkID, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/DBS_hilicpos_1390_RB.RData")
+
+#C18
+overlap <- intersect(Subject_data$c18neg, linkSub_c18$Sample.ID)
+## RB_Case_Control_Link.csv and DBS_c18neg_1602_raw.RData has 1390 overlapped participants?
+
+C18neg_use <- C18neg[,which(colnames(C18neg) %in% c("mz", "time", overlap))]
+linkSub_use <- linkSub_c18[which(linkSub_c18$Sample.ID %in% overlap),]
+class_use <- Subject_data[which(Subject_data$c18neg %in% overlap),]
+
+rownames(C18neg_use) <- paste("met_",1:nrow(C18neg_use),sep = "")
+linkID <- C18neg_use[,1:2]
+C18neg_use <- C18neg_use[,-c(1,2)]
+
+save(C18neg_use, linkSub_use, class_use, linkID, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/DBS_c18neg_1390_RB.RData")
+```
+
+# Metabolomics
+
+## LC-MS method
+
+HRM profiling was completed according to established methods (Walker et al., 2018; Walker et al., 2019). Serum samples were transported from California Biobank to Emory and stored at −80 °C. Batches of 40 serum samples were removed from storage and thawed on ice. Each sample was then thoroughly vortexed, and 65 μL of serum was treated with 130 μL of LC-MS grade acetonitrile. The extract was equilibrated for 30 min on ice and centrifuged at 16,100×g for 10 min to remove precipitated proteins. The resulting supernatant was transferred to an autosampler containing a low volume insert and maintained at 4 °C until analysis (\< 24 h). NIST 1950 (Simon-Manso et al., 2013) was analyzed at the beginning and end of the entire analytical run and for additional quality control (QC) two replicate pooled human plasma samples were analyzed at the beginning, middle, and end of each batch of 40 samples for normalization and batch effect evaluation. Sample extracts were analyzed in triplicate using a dual column, dual polarity approach that includes hydrophilic interaction (HILIC) chromatography with positive ESI and C18 chromatography with negative ESI (Ultimate 3000, Q-Exactive HF, Thermo Fisher, m/z range 85--1275) (Walker et al., 2018). Following a 10 μL sample injection, HILIC separation was accomplished using a 2.1 cm×5 cm×2.5 μm HILIC column (Waters XBridge BEH Amide XP HILIC) and acetonitrile gradient (A=water, B=acetonitrile, C=2% formic acid) consisting of an initial 1.5 min period of 22.5% A, 75% B, 2.5% C, followed by linear increase to 77.5% A, 20% B, 2.5% C at 4 min and hold for 1 min. Separation by C18 was with 2.1 cm×5 cm×3 μm column (Higgins endcapped C18) with C=10mM ammonium and the following gradient: initial 0.5 min period of 60% A, 35% B, 5% C, followed by linear increase to 0% A, 95% B, 5% C at 1.5 min and then held for an additional 3 min. Mobile phase flow rate was held at 0.4 mL/min for 1.5 min, and then increased to 0.5 mL/min. The mass spectrometer was operated using ESI mode at a resolution of 120,000 and mass-to-charge ratio (m/z) range 85--1275. Source tune settings included capillary temperature, sheath gas, auxiliary gas, sweep gas and spray voltage settings of 300 °C, 45 (arbitrary units), 25 (arbitrary units), 1 (arbitrary units) and+3.5 kV, respectively for positive mode, and 200 °C, 30 (arbitrary units), 5 (arbitrary units), 1 (arbitrary units) and+3.0 kV for negative mode. S-Lens RF level was maintained at 45. High-resolution detection of m/z features was accomplished by maximum injection time of 10 milliseconds and AGC target of 1×106. Raw data files were extracted and aligned using apLCMS (Yu et al., 2009) with modifications by xMSanalyzer (Uppal et al., 2013). Uniquely detected ions consisted of m/z, retention time and ion abundance, referred to as m/z features.
+
+## Preprocess - Notame
+
+### Read data & Construct MetaboSet objects
+
+https://github.com/antonvsdata/notame/blob/master/vignettes/project_example.Rmd
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+library("notame")
+ppath <- "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/Notame_preprocess"
+
+data <- read_from_excel(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/Notame_input.xlsx", sheet = 1, split_by = c("Column", "Ion_Mode"))
+names(data)
+sapply(data, class)
+sapply(data, dim)
+
+# The function returns a list of MetaboSet objects, one per mode (LC column x ionization mode).
+modes <- construct_metabosets(exprs = data$exprs, pheno_data = data$pheno_data,
+                             feature_data = data$feature_data,
+                             group_col = "Group")
+names(modes)
+sapply(modes, class)
+```
+
+The first parameters include the file name, sheet number, and coordinates for the corner ("Ion Mode" in the above examples), in which the three parts of the dataset come together. The row must be numeric, but the column can be given either as a number or a letter (or a combination of two letters), as that is how it's displayed in Excel. **NOTE:** the sheet number (default 1) and corner coordinates are now optional, as the function will try to determine them automatically. You only need to specify corner coordinates if you have information such as comments in the empty upper left corner of the sheet.
+
+Some fields in sample information and feature data have special purposes. 
+
+There are a few obligatory fields:  
+
+- "Injection_order" in sample information. The values must be numeric and unique  
+- "Mass" or "Average mz" in feature data, not case sensitive  
+- "Retention time", "RetentionTime", "Average rt(min)" or "rt"" in feature data, not case sensitive
+
+Additionally, there are a few special cases:
+
+- If sample information does not contain a "Sample_ID" field, one will be created. The sample IDs will be the injection order of the sample combined with a prefix, specified using the argument ```id_prefix```. The default prefix is "ID".  
+- If sample information does not contain a "QC" field that separates between QC samples and regular samples, the function will attempt to automatically create one using one of the columns in sample information. The value will be "QC" for QC samples and "Sample" for regular samples. If the field is given, regular samples can have any value, but the value for QC samples should always be "QC".  
+- One or more fields in feature data can be used to split the data into parts. These field names are given as the ```split_by``` parameter. Usually these columns are the LC column and Ionization mode. A new field "Split" will be added, that contains the combination of the columns given in the given order.  
+ALTERNATIVELY, if the file only contains one mode, specify the name of the mode, e.g. "HILIC_pos" as the ```name``` argument. In this case, the "Split" field will equal "HILIC_pos" for all the features.
+
+The function returns a list holding the three parts of the data:
+
+- ```exprs```: feature abundances across the samples  
+- ```pheno_data```: sample information  
+- ```feature_data```: feature information
+
+### Preprocessing by mode
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+processed <- list()
+for (i in seq_along(modes)) {
+  # PREPROCESSING STEPS
+}
+
+i <- 1
+name <- names(modes)[i]
+mode <- modes[[i]]
+
+#################################
+# Set all zero abundances to NA
+#################################
+mode <- mark_nas(mode, value = 0)
+
+#################################
+# Flag features with low detection rate
+#################################
+# Peak picking software sometimes keep features that are missing from almost all samples, which does not really make sense. There are two limits for the proportion of observed values: ```qc_limit``` for QC samples and ```group_limit``` for study groups. All features that are not observed in at least ```qc_limit``` of QC samples are flagged. In addition, features need to be observed in at least ```group_limit``` of samples in **at least one group**.  Adjust the limits as needed.
+mode <- flag_detection(mode, qc_limit = 0, group_limit = 0.8)
+
+# visualizations(mode, prefix = paste0(ppath, "/figures/", name, "_ORIG"))
+plot_quality(mode)
+plot_pca(mode)
+plot_pca(mode, color = "Injection_order")
+plot_sample_boxplots(mode, order_by = "Injection_order", fill_by = "QC")
+plot_dendrogram(mode)
+
+#################################
+# Drift correction
+#################################
+corrected <- correct_drift(mode)
+met_matrix <- as.data.frame(mode@assayData$exprs)
+sample_link <- mode@phenoData@data
+QC_matrix <- met_matrix[,sample_link$QC == "QC"]
+biosample_matrix <- met_matrix[,sample_link$QC == "Subject"]
+
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/DBS_hilicpos_1602_raw.RData")
+
+data_wave_reconstruct_hilic<-WaveICA(data=biosample_matrix,wf="haar",batch=linkSub_hilic$batch[which(linkSub_hilic$Sample.ID %in% sample_link$Sample_ID)],group=sample_link$Group[which(sample_link$QC == "Subject")],K=20,t=0.05,t2=0.05,alpha=0)
+```
