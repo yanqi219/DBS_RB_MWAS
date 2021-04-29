@@ -262,6 +262,10 @@ The function returns a list holding the three parts of the data:
 
 ### Preprocessing by mode
 
+According to Notame, the preprocess steps should be: flag low-quality features, batch correction based on QC, imputation, transformation etc. However, in this project, we don't have QCs pooled from our samples, therefore it may not be ideal to conduct quality control and batch correction based on QCs. On the other hand, other batch effect correction methods required no missing values. And looks like some imputation methods doesn't care about batch effects? (https://www.biorxiv.org/content/10.1101/260281v3.full). So decide to conduct RF-based imputation first, and then correct the batch effect.
+
+Current workflow: Notame-flag_detection, Notame-impute_rf, export data, WaveICA, transformation.
+
 ```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
 processed <- list()
 for (i in seq_along(modes)) {
@@ -291,15 +295,13 @@ plot_sample_boxplots(mode, order_by = "Injection_order", fill_by = "QC")
 plot_dendrogram(mode)
 
 #################################
-# Drift correction
+# Imputation of missing values
 #################################
-corrected <- correct_drift(mode)
-met_matrix <- as.data.frame(mode@assayData$exprs)
-sample_link <- mode@phenoData@data
-QC_matrix <- met_matrix[,sample_link$QC == "QC"]
-biosample_matrix <- met_matrix[,sample_link$QC == "Subject"]
-
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/DBS_hilicpos_1602_raw.RData")
-
-data_wave_reconstruct_hilic<-WaveICA(data=biosample_matrix,wf="haar",batch=linkSub_hilic$batch[which(linkSub_hilic$Sample.ID %in% sample_link$Sample_ID)],group=sample_link$Group[which(sample_link$QC == "Subject")],K=20,t=0.05,t2=0.05,alpha=0)
+mode_no_qc <- drop_qcs(mode)
+set.seed(1106)
+imputed <- impute_rf(mode_no_qc)
+# met_matrix <- as.data.frame(mode@assayData$exprs)
+# sample_link <- mode@phenoData@data
+# QC_matrix <- met_matrix[,sample_link$QC == "QC"]
+# biosample_matrix <- met_matrix[,sample_link$QC == "Subject"]
 ```
