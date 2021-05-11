@@ -715,7 +715,7 @@ pca_score <- pca.datExpr$x
 PC_matrix <- pca_score[,1:40]
 cov_matrix <- 
   class_use_noOUT %>%
-  dplyr::select(Case_Control_Status, MRaceShort, birthyear, MotherAge, QUINYOST_birth, parity, GestWeeks, meduc, foreign)
+  dplyr::select(Case_Control_Status, MRaceShort, birthyear, MotherAge, QUINYOST_birth, parity, GestWeeks, meduc, foreign, sex)
 # cor_value <- WGCNA::corAndPvalue(x = cov_matrix, y = PC_matrix, method = "pearson")
 cor_value <- WGCNA::bicorAndPvalue(x = cov_matrix, y = PC_matrix, use = "pairwise.complete.obs", alternative = "two.sided", maxPOutliers = 0.05)
 edge_list <- cor_value$cor
@@ -743,8 +743,9 @@ table(class_use_noOUT$parity)
 table(class_use_noOUT$GestWeeks)
 table(class_use_noOUT$meduc) # too many missing, decide not to adjust for it
 table(class_use_noOUT$foreign)
+table(class_use_noOUT$sex)
 
-removed <- class_use_noOUT$Barcode[which(is.na(class_use_noOUT$MRaceShort)|is.na(class_use_noOUT$birthyear)|is.na(class_use_noOUT$MotherAge)|is.na(class_use_noOUT$parity)|is.na(class_use_noOUT$QUINYOST_birth)|is.na(class_use_noOUT$GestWeeks)|is.na(class_use_noOUT$foreign))]
+removed <- class_use_noOUT$Barcode[which(is.na(class_use_noOUT$MRaceShort)|is.na(class_use_noOUT$birthyear)|is.na(class_use_noOUT$MotherAge)|is.na(class_use_noOUT$parity)|is.na(class_use_noOUT$QUINYOST_birth)|is.na(class_use_noOUT$GestWeeks)|is.na(class_use_noOUT$foreign)|is.na(class_use_noOUT$sex))]
 
 HILICpos_norm_t_noOUt <- HILICpos_norm_t_noOUt[-which(rownames(HILICpos_norm_t_noOUt) %in% removed),]
 C18neg_norm_t_noOUt <- C18neg_norm_t_noOUt[-which(rownames(C18neg_norm_t_noOUt) %in% removed),]
@@ -768,6 +769,7 @@ table(class_use_noOUT$QUINYOST_birth)
 table(class_use_noOUT$parity) # 0,1,2-two or more
 table(class_use_noOUT$GestWeeks)
 table(class_use_noOUT$foreign)
+table(class_use_noOUT$sex)
 ```
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
@@ -776,7 +778,7 @@ table(class_use_noOUT$foreign)
 ## Link covariates with features
 HILICpos_feature_w_cov <- cbind(class_use_noOUT,HILICpos_norm_t_noOUt)
 
-fit_feature <- lm(data = HILICpos_feature_w_cov, as.matrix(HILICpos_feature_w_cov[,718:ncol(HILICpos_feature_w_cov)]) ~ as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign), na.action = na.exclude)
+fit_feature <- lm(data = HILICpos_feature_w_cov, as.matrix(HILICpos_feature_w_cov[,718:ncol(HILICpos_feature_w_cov)]) ~ as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), na.action = na.exclude)
 
 residual_feature <- as.matrix(residuals(fit_feature),nrow = dim(HILICpos_feature_w_cov)[1])
 save_residual <- as.data.frame(residual_feature)
@@ -786,7 +788,7 @@ sum(is.na(HILICpos_residual))
 
 C18neg_feature_w_cov <- cbind(class_use_noOUT,C18neg_norm_t_noOUt)
 
-fit_feature <- lm(data = C18neg_feature_w_cov, as.matrix(C18neg_feature_w_cov[,718:ncol(C18neg_feature_w_cov)]) ~ as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign), na.action = na.exclude)
+fit_feature <- lm(data = C18neg_feature_w_cov, as.matrix(C18neg_feature_w_cov[,718:ncol(C18neg_feature_w_cov)]) ~ as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), na.action = na.exclude)
 residual_feature <- as.matrix(residuals(fit_feature),nrow = dim(C18neg_feature_w_cov)[1])
 save_residual <- as.data.frame(residual_feature)
 rownames(save_residual) <- rownames(C18neg_norm_t_noOUt)
@@ -829,6 +831,11 @@ demo$birthyear <-
          labels=c("1998-2000", # Reference
                   "2001-2003", 
                   "2004-2007"))
+demo$sex <- 
+  factor(demo$sex, 
+         levels=c(1,2),
+         labels=c("Male", # Reference
+                  "Female"))
 table1::label(demo$MRaceShort) <- "Race/Ethnicity"
 table1::label(demo$birthyear) <- "Birth Year"
 table1::label(demo$MotherAge) <- "Maternal Age"
@@ -837,9 +844,10 @@ table1::label(demo$parity) <- "parity"
 table1::label(demo$GestWeeks) <- "Preterm Birth"
 table1::label(demo$meduc) <- "Maternal Education"
 table1::label(demo$foreign) <- "Foreign Born"
+table1::label(demo$sex) <- "Sex"
 
-table1::table1(~ MRaceShort + birthyear + factor(MotherAge) + factor(QUINYOST_birth) + factor(parity) + factor(GestWeeks) + factor(meduc) + factor(foreign) + Retinoblastoma| Case_Control_Status, data=demo)
-table1::table1(~ MRaceShort + birthyear + factor(MotherAge) + factor(QUINYOST_birth) + factor(parity) + factor(GestWeeks) + factor(meduc) + factor(foreign)| Case_Control_Status*Retinoblastoma, data=demo)
+table1::table1(~ MRaceShort + birthyear + sex + factor(MotherAge) + factor(QUINYOST_birth) + factor(parity) + factor(GestWeeks) + factor(meduc) + factor(foreign) + Retinoblastoma| Case_Control_Status, data=demo)
+table1::table1(~ MRaceShort + birthyear + sex + factor(MotherAge) + factor(QUINYOST_birth) + factor(parity) + factor(GestWeeks) + factor(meduc) + factor(foreign)| Case_Control_Status*Retinoblastoma, data=demo)
 ```
 
 # Feature selection
@@ -876,7 +884,7 @@ fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
 
 feature_w_cov <- cbind(class_use_noOUT, X)
 
-lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign), data = feature_w_cov, family = "binomial")
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
 
 feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
 
@@ -1382,7 +1390,7 @@ fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
 
 feature_w_cov <- cbind(class_use_noOUT, X)
 
-lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign), data = feature_w_cov, family = "binomial")
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
 
 feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
 
@@ -1941,8 +1949,8 @@ load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB
 class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
 
 # Statified by type
-type = "Unilateral"
-class_use_noOUT <- class_use_noOUT[which(!is.na(class_use_noOUT$Unilateral)),]
+type = "Bilateral"
+class_use_noOUT <- class_use_noOUT[which(!is.na(class_use_noOUT$Bilateral)),]
 table(class_use_noOUT$Case_Control_Status)
 HILICpos_norm_t_noOUt <- HILICpos_norm_t_noOUt[class_use_noOUT$hilicpos,]
 HILICpos_residual <- HILICpos_residual[class_use_noOUT$hilicpos,]
@@ -1966,7 +1974,7 @@ fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
 
 feature_w_cov <- cbind(class_use_noOUT, X)
 
-lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign), data = feature_w_cov, family = "binomial")
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
 
 feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
 
@@ -2455,8 +2463,8 @@ load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB
 class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
 
 # Statified by type
-type = "Unilateral"
-class_use_noOUT <- class_use_noOUT[which(!is.na(class_use_noOUT$Unilateral)),]
+type = "Bilateral"
+class_use_noOUT <- class_use_noOUT[which(!is.na(class_use_noOUT$Bilateral)),]
 table(class_use_noOUT$Case_Control_Status)
 C18neg_norm_t_noOUt <- C18neg_norm_t_noOUt[class_use_noOUT$hilicpos,]
 C18neg_residual <- C18neg_residual[class_use_noOUT$hilicpos,]
@@ -2480,7 +2488,7 @@ fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
 
 feature_w_cov <- cbind(class_use_noOUT, X)
 
-lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign), data = feature_w_cov, family = "binomial")
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
 
 feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
 
@@ -3027,6 +3035,850 @@ write.table(HILIC, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastom
 write.table(C18, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/C18_final_table.txt", sep = ""), sep = "\t", row.names = F,quote = F)
 ```
 
+## Stratified by sex
+
+### HILICpos
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
+rm(HILICpos_QC, linkID_hilicpos, linkSub_QC_hilicpos, linkSub_use_hilicpos) # This is a non-scaled version, for fold change
+
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
+
+# Statified by sex
+type = "male"
+class_use_noOUT <- class_use_noOUT[which(class_use_noOUT$sex==1),]
+table(class_use_noOUT$Case_Control_Status)
+HILICpos_norm_t_noOUt <- HILICpos_norm_t_noOUt[class_use_noOUT$hilicpos,]
+HILICpos_residual <- HILICpos_residual[class_use_noOUT$hilicpos,]
+
+group <- "Case_Control_Status"
+
+X <- HILICpos_norm_t_noOUt
+X_residual <- HILICpos_residual
+X_fc <- HILICpos_use_t[rownames(X),]
+Y <- class_use_noOUT[[group]]
+# Y <- factor(Y, levels=c(0,1),labels=c("Control","Case"))
+linkid <- linkID_hilicpos
+
+vip_threshold <- 1.5
+
+fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
+
+###################################################
+### GLM
+###################################################
+
+feature_w_cov <- cbind(class_use_noOUT, X)
+
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
+
+feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
+
+# feature_pvalue <- cbind(linkid,feature_pvalue)
+# colnames(feature_pvalue) <- c("mz","time","coef","pvalue")
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+feature_pvalue$adjust_pvalue <- p.adjust(feature_pvalue$pvalue, method="BH")
+
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= 0.05), "features are significant (raw_p<=0.05)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.2), "features are significant (adj_p<=0.2)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+
+# Effective number of testing (95% and 99%)
+pca.datExpr = mixOmics::pca(X, ncomp = 1000, center = TRUE, scale = TRUE)
+ent <- sum(pca.datExpr$explained_variance)
+ent <- summary(pca.datExpr)$cum.var
+ent95 <- 0.05/sum(ent<0.95)
+ent99 <- 0.05/sum(ent<0.99)
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= ent95), "features are significant (ENT95)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= ent99), "features are significant (ENT99)", sep = " "))
+
+rm(fit_feature_summary, fit_feature)
+
+###################################################
+### EN
+###################################################
+
+## Train the model
+set.seed(1106)
+
+trctrl <- trainControl(method = "cv",number=10)
+enetFit <- train(x=X_residual, y=Y, method = "glmnet", trControl=trctrl, family="binomial",
+                 # alpha and lambda paramters to try
+                 tuneGrid = data.frame(alpha=0.5, lambda=seq(0.1,0.9,0.05)))
+enetFit
+coef_enetFit <- as.matrix(coef(enetFit$finalModel, enetFit$bestTune$lambda))
+coef_enetFit <- coef_enetFit[-1,]
+feature_pvalue$EN <- coef_enetFit
+
+print(paste("Elastic net:", sum(feature_pvalue$EN != 0), "features are selected", sep = " "))
+
+###################################################
+### RF_BORUTA
+###################################################
+
+# set.seed(1106)
+# library(Boruta)
+# 
+# start <- Sys.time()
+# Bor.test <- Boruta(x=X_residual, y=Y, doTrace = 2)
+# Sys.time()-start
+# 
+# mean_imphistory<-apply(Bor.test$ImpHistory,2,mean)
+# varimp_res2<-mean_imphistory[1:(length(mean_imphistory)-3)]
+# temp_decision_vec<-as.character(Bor.test$finalDecision)
+
+###################################################
+### PLS
+###################################################
+
+datExpr.pls <- mixOmics::plsda(X_residual, Y, ncomp = 5)
+# tune.pls <- mixOmics::perf(datExpr.pls, validation = "Mfold", folds = 10, progressBar = TRUE, auc = TRUE, nrepeat = 50, cpus = 4)
+# 
+# plot(tune.pls, col = color.mixo(5:7), sd = TRUE, legend.position = "horizontal")
+
+opt_comp <- 2
+
+# select important variables
+vip.pls.datExpr <- vip(datExpr.pls)
+
+# get vip score for all expr features and plot manhattan plots
+vip.for.selection<-as.data.frame(apply(vip.pls.datExpr[,c(1:opt_comp)],1,mean))
+vip.for.selection <- cbind(vip.for.selection,feature_pvalue)
+colnames(vip.for.selection)[1] = "vip"
+
+print(paste("PLS-DA:", sum(vip.for.selection$vip >= vip_threshold), "features are significant (VIP>=1.5)", sep = " "))
+
+###################################################
+### sPLS
+###################################################
+
+# sPLSDA
+# grid of possible keepX values that will be tested for each component
+# list.keepX <- c(seq(10,100,10), seq(150,350,50))
+# set.seed(1106)
+# tune.splsda.srbct <- tune.splsda(X_residual, Y, ncomp = 5, validation = 'Mfold', folds = 10, progressBar = TRUE, dist = 'max.dist', measure = "BER", test.keepX = list.keepX, nrepeat = 50, cpus = 8)
+# save(tune.splsda.srbct, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/splsda_tune_hilic_RB.RData")
+
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/splsda_tune_hilic_RB.RData")
+select.keepX <- tune.splsda.srbct$choice.keepX[1:2]
+tune.splsda.srbct$choice.ncomp$ncomp
+# plot(tune.splsda.srbct, col = color.jet(5))
+
+set.seed(1106)
+splsda.srbct <- splsda(X_residual, Y, ncomp = 2, keepX = select.keepX)
+# plotIndiv(splsda.srbct, comp = c(1,2),
+#           group = Y, ind.names = FALSE, 
+#           ellipse = TRUE, legend = TRUE,
+#           title = 'sPLS-DA on epigenomics, comp 1 & 2')
+# plotIndiv(splsda.srbct, comp = c(1,3),
+#           group = Y, ind.names = FALSE, 
+#           ellipse = TRUE, legend = TRUE,
+#           title = 'sPLS-DA on epigenomics, comp 1 & 3')
+# auc.splsda = auroc(splsda.srbct, roc.comp = 3)
+
+# Performance assessment
+# The classification performance of the final sPLS-DA model is assessed with the perf function by specifying a prediction distance.
+
+# set.seed(1106) # for reproducibility, only when the `cpus' argument is not used
+# perf.srbct <- perf(splsda.srbct, validation = "Mfold", folds = 10, nrepeat = 50, progressBar = T, cpus = 4, auc = TRUE)
+
+### Proportion of variance explained by PLS components
+Rd.YvsU <- cor(as.numeric(Y), splsda.srbct$variates$X[,1:2])
+Rd.YvsU <- apply(Rd.YvsU^2, 2, sum)
+Rd.Y <- cbind(Rd.YvsU, cumsum(Rd.YvsU))
+colnames(Rd.Y) <- c("Proportion", "Cumulative")
+
+# View proportion and cumulative values
+Rd.Y # 82.35%
+
+# selected features
+## The selectVar function outputs the selected variables along with their loading weight value, from the most important to the least important variable.
+splsda_feature <- 
+  splsda.srbct$loadings %>%
+  as.data.frame() %>%
+  dplyr::select(1:3) %>%
+  dplyr::filter(X.comp1 != 0 | X.comp2 != 0) %>%
+  tibble::rownames_to_column(var = "met") %>%
+  tidyr::pivot_longer(cols = !met, names_to = "spls_comp", values_to = "spls_loading") %>%
+  dplyr::filter(spls_loading != 0) %>%
+  dplyr::filter(!duplicated(met)) %>%
+  tibble::column_to_rownames(var = "met") %>%
+  dplyr::select(spls_loading, spls_comp)
+# splsda_feature_1 <- data.frame(selectVar(splsda.srbct, comp = 1)$value); splsda_feature_1$spls_comp <- 1
+# splsda_feature_2 <- data.frame(selectVar(splsda.srbct, comp = 2)$value); splsda_feature_2$spls_comp <- 2
+# splsda_feature_3 <- data.frame(selectVar(splsda.srbct, comp = 3)$value); splsda_feature_3$spls_comp <- 3
+# ## Here we do have the duplicated value issue, second one will be renamed to xxx1. But I guess it doesn't matter because when we match it back to vip.for.selection, it will only keep one record...
+# splsda_feature <- rbind(splsda_feature_1, splsda_feature_2, splsda_feature_3)
+# colnames(splsda_feature) <- c("spls_loading", "spls_comp")
+
+vip.for.selection <- merge(vip.for.selection, splsda_feature, by = 0, all.x = T)
+rownames(vip.for.selection) <- vip.for.selection$Row.names
+vip.for.selection <- vip.for.selection[,-1]
+vip.for.selection <- vip.for.selection[rownames(linkid),] # important! Make sure the order is correct!
+
+###################################################
+# Fold Change
+###################################################
+
+fc.empty <- data.frame()
+for(i in 1:ncol(X_fc)){
+  case.temp <- X_fc[which(as.character(Y) == "Case"),i]
+  case <- mean(case.temp[!(abs(case.temp - median(case.temp)) > 2*sd(case.temp))])
+  control.temp <- X_fc[which(as.character(Y) == "Control"),i]
+  control <- mean(control.temp[!(abs(control.temp - median(control.temp)) > 2*sd(control.temp))])
+  fc.empty[i,1] <- case
+  fc.empty[i,2] <- control
+}
+colnames(fc.empty) <- c("case","control")
+fc.empty$foldchange = fc.empty$case-fc.empty$control
+fc.updown <- fc.empty
+rownames(fc.updown) <- colnames(X_fc)
+rm(fc.empty,case,case.temp,control, control.temp)
+vip.for.selection <- cbind(vip.for.selection, fc.updown)
+
+###################################################
+### summary
+###################################################
+
+vip.for.selection <- cbind(linkid,vip.for.selection)
+vip.for.selection$group[vip.for.selection$vip < vip_threshold] <- 0
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$coef <= 0] <- 1 ## down
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$coef > 0] <- 2  ## up
+
+ggplot2::ggplot(vip.for.selection,aes(x=mz,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),size=1,show.legend = FALSE) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$mz, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 12)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=12, face="bold"),
+        axis.title.x = element_text(size=12, face="bold"),
+        axis.title.y = element_text(size=12, face="bold"))+
+  labs(x="M/Z",y="VIP Score") +
+  ggtitle("Type 1 manhattan plot (VIP vs mz)")
+
+ggplot2::ggplot(vip.for.selection,aes(x=time,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),size=1,show.legend = FALSE) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$time, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 12)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=12, face="bold"),
+        axis.title.x = element_text(size=12, face="bold"),
+        axis.title.y = element_text(size=12, face="bold"))+
+  labs(x="Retention Time",y="VIP Score") +
+  ggtitle("Type 2 manhattan plot (VIP vs retention time)")
+
+# volcano <- vip.for.selection[,c(1,2,5,12)]
+# volcano$group <- ifelse(volcano$pvalue<=0.05&volcano$foldchange>=1,3,
+#                         ifelse(volcano$pvalue<=0.05&volcano$foldchange<=-1,2,
+#                                ifelse(volcano$pvalue<=0.05&abs(volcano$foldchange)<=1,1,0)))
+# volcano$size <- ifelse(volcano$group == 0,0,1)
+# 
+# ggplot2::ggplot(volcano,aes(x=foldchange,y=-log10(pvalue))) +
+#   geom_point(aes(colour=cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE) + 
+#   xlim(-3.3,3.3) +
+#   scale_fill_hue(c=20, l=20) + 
+#   scale_color_manual(values = c("#999999","goldenrod3","springgreen3","firebrick1")) + 
+#   scale_size_continuous(range = c(1,3)) +
+#   geom_hline(aes(yintercept = 1.30103),color = "black",size = 0.5,linetype = "dashed") +
+#   geom_vline(aes(xintercept = 1),color = "black",size = 0.5,linetype = "dashed") +
+#   geom_vline(aes(xintercept = -1),color = "black",size = 0.5,linetype = "dashed") +
+#   labs(x="Log2(Fold Change)",y="-Log10(P-value)") +
+#   # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+#   theme_bw(base_size = 12)+
+#   theme(axis.text=element_text(face="bold"),
+#         panel.grid.major.x = element_blank(),
+#         panel.grid.minor.x = element_blank(),
+#         plot.title = element_text(size=12, face="bold"),
+#         axis.title.x = element_text(size=12, face="bold"),
+#         axis.title.y = element_text(size=12, face="bold"))
+
+# Using significant features
+
+if(fs_mode == "lm"){
+  good_feats_ordered <- subset(vip.for.selection, pvalue < 0.05)
+} else if (fs_mode == "plslm"){
+  good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold & pvalue < 0.05)
+} else if (fs_mode == "plsda"){
+  good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold)
+} else if (fs_mode == "spls"){
+  good_feats_ordered <- subset(vip.for.selection,!is.na(spls_loading))
+} else {
+  good_feats_ordered <- subset(vip.for.selection,EN != 0)
+}
+
+print(paste("Combined:", sum(vip.for.selection$vip > vip_threshold & vip.for.selection$pvalue < 0.05), "features are significant (VIP>=", vip_threshold, "& Logistic regression Raw_P<=0.05)", sep = " "))
+
+good_feats_ordered.name <- {}
+for (i in 1:nrow(good_feats_ordered)) {
+  good_feats_ordered.name <- c(good_feats_ordered.name,which(colnames(X)==row.names(good_feats_ordered[i,])))
+}
+sig.X <- X[,c(good_feats_ordered.name)]
+
+# Save files
+save.plsresults.allfeatures <- cbind(vip.for.selection,t(X))
+# good_feats_ordered$rank <- 1:nrow(good_feats_ordered)
+save.plsresults.sigfeatures <- cbind(good_feats_ordered,t(sig.X))
+
+###############
+# Recalculate the FDR
+###############
+save.plsresults.sigfeatures$adjust_pvalue <- p.adjust(save.plsresults.sigfeatures$pvalue, method="BH")
+
+print(paste("Number of significant features:",nrow(save.plsresults.sigfeatures),sep = " "))
+
+print(paste("Number of PLSDA-selected features with FDR < 0.05:", sum(save.plsresults.sigfeatures$adjust_pvalue<0.05),sep = " "))
+print(paste("Number of PLSDA-selected features with FDR < 0.2:", sum(save.plsresults.sigfeatures$adjust_pvalue<0.2),sep = " "))
+```
+
+#### Annotation
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+annotation <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/xMSannotator_Stage4.csv", header = T)
+annotation <- annotation[which(annotation$Confidence >= 2),] ## only confidence score greater than 2
+
+annotation$mz <- round(annotation$mz, 4)
+annotation$time <- round(annotation$time, 1)
+save.plsresults.sigfeatures$mz <- round(save.plsresults.sigfeatures$mz, 4)
+save.plsresults.sigfeatures$time <- round(save.plsresults.sigfeatures$time, 1)
+
+save.annotation <- merge(save.plsresults.sigfeatures[,1:15], annotation, by = c("mz", "time"), all.x = T)
+
+######################
+# In-house library
+######################
+
+# library(xlsx)
+# 
+# tolerance = 5
+# 
+# HILIC_library <- read.xlsx(file = "/Users/qiyan/Dropbox/PEG/PD_Pest_MultiOmics/Raw_Data/InHouse_Library_Emory/Combined_comfirmed_metabolite_list_08032020.xlsx", 1, header = T) %>%
+#   distinct(KEGGID, .keep_all= TRUE)
+# 
+# linkID_hilicpos$delta_mz = (tolerance) * (linkID_hilicpos$mz/1e+06)
+# linkID_hilicpos$min_mz = linkID_hilicpos$mz - linkID_hilicpos$delta_mz
+# linkID_hilicpos$max_mz = linkID_hilicpos$mz + linkID_hilicpos$delta_mz
+# 
+# HILIC_verify <- data.frame()
+# for(i in 1:nrow(linkID_hilicpos)){
+#   rownum <- which(HILIC_library$mz >= linkID_hilicpos$min_mz[i] & HILIC_library$mz <= linkID_hilicpos$max_mz[i] & abs(HILIC_library$time-linkID_hilicpos$time[i]) < 30)
+#   if (length(rownum)!=0){
+#     temp <- cbind(linkID_hilicpos[i,],HILIC_library[rownum,])
+#     HILIC_verify <- rbind(HILIC_verify, temp)
+#   }
+#   rm(temp)
+# }
+# 
+# HILIC_verify <- HILIC_verify[,c(2,3,15,16,11,9,10)]
+# colnames(HILIC_verify) <- c("mz","time","mz_library","time_library","Name","KEGGID","HMDBID")
+# 
+# write.table(HILIC_verify, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/HILIC_verified_features.txt", sep = "\t", row.names = F,quote = F)
+# save(HILIC_verify, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/HILIC_verified_features.RData")
+
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/HILIC_verified_features.RData")
+
+HILIC_verify$mz <- round(HILIC_verify$mz, 4)
+HILIC_verify$time <- round(HILIC_verify$time, 1)
+
+save.annotation <- merge(save.annotation, HILIC_verify, by = c("mz", "time"), all.x = T)
+```
+
+#### Mummichog
+
+Use PLSR VIP >= 2 and Pearson correlaiton raw P-value <= 0.05 as the threshold.
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+###################################################
+### Prepare for mummichog
+###################################################
+
+save.mummichog_PLS_VIP2 <- save.plsresults.allfeatures[,c(2,3,6,7)]
+save.mummichog_PLS_VIP2$"p-value" = 0.051
+
+# save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold&save.mummichog_PLS_VIP2$`pvalue.datExpr$pvalue`<pvalue_threshold] <- 0.04
+save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <- 0.04
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,5,4)]
+
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/HILICpos_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
+write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/HILICpos_MWAS_result.RData", sep = ""))
+```
+
+### C18neg
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
+rm(C18neg_QC, linkID_c18neg, linkSub_QC_c18neg, linkSub_use_c18neg) # This is a non-scaled version, for fold change
+
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
+
+# Statified by sex
+type = "male"
+class_use_noOUT <- class_use_noOUT[which(class_use_noOUT$sex==1),]
+table(class_use_noOUT$Case_Control_Status)
+C18neg_norm_t_noOUt <- C18neg_norm_t_noOUt[class_use_noOUT$hilicpos,]
+C18neg_residual <- C18neg_residual[class_use_noOUT$hilicpos,]
+
+group <- "Case_Control_Status"
+
+X <- C18neg_norm_t_noOUt
+X_residual <- C18neg_residual
+X_fc <- C18neg_use_t[rownames(X),]
+Y <- class_use_noOUT[[group]]
+# Y <- factor(Y, levels=c(0,1),labels=c("Control","Case"))
+linkid <- linkID_c18neg
+
+vip_threshold <- 1.5
+
+fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
+
+###################################################
+### GLM
+###################################################
+
+feature_w_cov <- cbind(class_use_noOUT, X)
+
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
+
+feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
+
+# feature_pvalue <- cbind(linkid,feature_pvalue)
+# colnames(feature_pvalue) <- c("mz","time","coef","pvalue")
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+feature_pvalue$adjust_pvalue <- p.adjust(feature_pvalue$pvalue, method="BH")
+
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= 0.05), "features are significant (raw_p<=0.05)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.2), "features are significant (adj_p<=0.2)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+
+# Effective number of testing (95% and 99%)
+pca.datExpr = mixOmics::pca(X, ncomp = 1000, center = TRUE, scale = TRUE)
+ent <- sum(pca.datExpr$explained_variance)
+ent <- summary(pca.datExpr)$cum.var
+ent95 <- 0.05/sum(ent<0.95)
+ent99 <- 0.05/sum(ent<0.99)
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= ent95), "features are significant (ENT95)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= ent99), "features are significant (ENT99)", sep = " "))
+
+rm(fit_feature_summary, fit_feature)
+
+###################################################
+### EN
+###################################################
+
+## Train the model
+set.seed(1106)
+
+trctrl <- trainControl(method = "cv",number=10)
+enetFit <- train(x=X_residual, y=Y, method = "glmnet", trControl=trctrl, family="binomial",
+                 # alpha and lambda paramters to try
+                 tuneGrid = data.frame(alpha=0.5, lambda=seq(0.1,0.9,0.05)))
+enetFit
+coef_enetFit <- as.matrix(coef(enetFit$finalModel, enetFit$bestTune$lambda))
+coef_enetFit <- coef_enetFit[-1,]
+feature_pvalue$EN <- coef_enetFit
+
+print(paste("Elastic net:", sum(feature_pvalue$EN != 0), "features are selected", sep = " "))
+
+###################################################
+### RF_BORUTA
+###################################################
+
+# set.seed(1106)
+# library(Boruta)
+# 
+# start <- Sys.time()
+# Bor.test <- Boruta(x=X_residual, y=Y, doTrace = 2)
+# Sys.time()-start
+# 
+# mean_imphistory<-apply(Bor.test$ImpHistory,2,mean)
+# varimp_res2<-mean_imphistory[1:(length(mean_imphistory)-3)]
+# temp_decision_vec<-as.character(Bor.test$finalDecision)
+
+###################################################
+### PLS
+###################################################
+
+datExpr.pls <- mixOmics::plsda(X_residual, Y, ncomp = 5)
+# tune.pls <- mixOmics::perf(datExpr.pls, validation = "Mfold", folds = 10, progressBar = TRUE, auc = TRUE, nrepeat = 50, cpus = 4)
+# 
+# plot(tune.pls, col = color.mixo(5:7), sd = TRUE, legend.position = "horizontal")
+
+opt_comp <- 2
+
+# select important variables
+vip.pls.datExpr <- vip(datExpr.pls)
+
+# get vip score for all expr features and plot manhattan plots
+vip.for.selection<-as.data.frame(apply(vip.pls.datExpr[,c(1:opt_comp)],1,mean))
+vip.for.selection <- cbind(vip.for.selection,feature_pvalue)
+colnames(vip.for.selection)[1] = "vip"
+
+print(paste("PLS-DA:", sum(vip.for.selection$vip >= vip_threshold), "features are significant (VIP>=1.5)", sep = " "))
+
+###################################################
+### sPLS
+###################################################
+
+# sPLSDA
+# grid of possible keepX values that will be tested for each component
+# list.keepX <- c(seq(10,100,10), seq(150,350,50))
+# set.seed(1106)
+# tune.splsda.srbct <- tune.splsda(X_residual, Y, ncomp = 5, validation = 'Mfold', folds = 10, progressBar = TRUE, dist = 'max.dist', measure = "BER", test.keepX = list.keepX, nrepeat = 50, cpus = 8)
+# save(tune.splsda.srbct, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/splsda_tune_c18_RB.RData")
+
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/splsda_tune_c18_RB.RData")
+select.keepX <- tune.splsda.srbct$choice.keepX[1:4]
+tune.splsda.srbct$choice.ncomp$ncomp
+# plot(tune.splsda.srbct, col = color.jet(5))
+
+set.seed(1106)
+splsda.srbct <- splsda(X_residual, Y, ncomp = 4, keepX = select.keepX)
+# plotIndiv(splsda.srbct, comp = c(1,2),
+#           group = Y, ind.names = FALSE, 
+#           ellipse = TRUE, legend = TRUE,
+#           title = 'sPLS-DA on epigenomics, comp 1 & 2')
+# plotIndiv(splsda.srbct, comp = c(1,3),
+#           group = Y, ind.names = FALSE, 
+#           ellipse = TRUE, legend = TRUE,
+#           title = 'sPLS-DA on epigenomics, comp 1 & 3')
+# auc.splsda = auroc(splsda.srbct, roc.comp = 3)
+
+# Performance assessment
+# The classification performance of the final sPLS-DA model is assessed with the perf function by specifying a prediction distance.
+
+# set.seed(1106) # for reproducibility, only when the `cpus' argument is not used
+# perf.srbct <- perf(splsda.srbct, validation = "Mfold", folds = 10, nrepeat = 50, progressBar = T, cpus = 4, auc = TRUE)
+
+### Proportion of variance explained by PLS components
+Rd.YvsU <- cor(as.numeric(Y), splsda.srbct$variates$X[,1:4])
+Rd.YvsU <- apply(Rd.YvsU^2, 2, sum)
+Rd.Y <- cbind(Rd.YvsU, cumsum(Rd.YvsU))
+colnames(Rd.Y) <- c("Proportion", "Cumulative")
+
+# View proportion and cumulative values
+Rd.Y # 82.35%
+
+# selected features
+## The selectVar function outputs the selected variables along with their loading weight value, from the most important to the least important variable.
+splsda_feature <- 
+  splsda.srbct$loadings %>%
+  as.data.frame() %>%
+  dplyr::select(1:4) %>%
+  dplyr::filter(X.comp1 != 0 | X.comp2 != 0 | X.comp3 != 0 | X.comp4 != 0) %>%
+  tibble::rownames_to_column(var = "met") %>%
+  tidyr::pivot_longer(cols = !met, names_to = "spls_comp", values_to = "spls_loading") %>%
+  dplyr::filter(spls_loading != 0) %>%
+  dplyr::filter(!duplicated(met)) %>%
+  tibble::column_to_rownames(var = "met") %>%
+  dplyr::select(spls_loading, spls_comp)
+# splsda_feature_1 <- data.frame(selectVar(splsda.srbct, comp = 1)$value); splsda_feature_1$spls_comp <- 1
+# splsda_feature_2 <- data.frame(selectVar(splsda.srbct, comp = 2)$value); splsda_feature_2$spls_comp <- 2
+# splsda_feature_3 <- data.frame(selectVar(splsda.srbct, comp = 3)$value); splsda_feature_3$spls_comp <- 3
+# ## Here we do have the duplicated value issue, second one will be renamed to xxx1. But I guess it doesn't matter because when we match it back to vip.for.selection, it will only keep one record...
+# splsda_feature <- rbind(splsda_feature_1, splsda_feature_2, splsda_feature_3)
+# colnames(splsda_feature) <- c("spls_loading", "spls_comp")
+
+vip.for.selection <- merge(vip.for.selection, splsda_feature, by = 0, all.x = T)
+rownames(vip.for.selection) <- vip.for.selection$Row.names
+vip.for.selection <- vip.for.selection[,-1]
+vip.for.selection <- vip.for.selection[rownames(linkid),] # important! Make sure the order is correct!
+
+###################################################
+# Fold Change
+###################################################
+
+fc.empty <- data.frame()
+for(i in 1:ncol(X_fc)){
+  case.temp <- X_fc[which(as.character(Y) == "Case"),i]
+  case <- mean(case.temp[!(abs(case.temp - median(case.temp)) > 2*sd(case.temp))])
+  control.temp <- X_fc[which(as.character(Y) == "Control"),i]
+  control <- mean(control.temp[!(abs(control.temp - median(control.temp)) > 2*sd(control.temp))])
+  fc.empty[i,1] <- case
+  fc.empty[i,2] <- control
+}
+colnames(fc.empty) <- c("case","control")
+fc.empty$foldchange = fc.empty$case-fc.empty$control
+fc.updown <- fc.empty
+rownames(fc.updown) <- colnames(X_fc)
+rm(fc.empty,case,case.temp,control, control.temp)
+vip.for.selection <- cbind(vip.for.selection, fc.updown)
+
+###################################################
+### summary
+###################################################
+
+vip.for.selection <- cbind(linkid,vip.for.selection)
+vip.for.selection$group[vip.for.selection$vip < vip_threshold] <- 0
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$coef <= 0] <- 1 ## down
+vip.for.selection$group[vip.for.selection$vip >= vip_threshold & vip.for.selection$coef > 0] <- 2  ## up
+
+ggplot2::ggplot(vip.for.selection,aes(x=mz,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),size=1,show.legend = FALSE) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$mz, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 12)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=12, face="bold"),
+        axis.title.x = element_text(size=12, face="bold"),
+        axis.title.y = element_text(size=12, face="bold"))+
+  labs(x="M/Z",y="VIP Score") +
+  ggtitle("Type 1 manhattan plot (VIP vs mz)")
+
+ggplot2::ggplot(vip.for.selection,aes(x=time,y=vip)) +
+  geom_point(aes(colour = cut(group, c(-Inf,0,1,2,Inf))),size=1,show.legend = FALSE) + 
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","springgreen3","firebrick1")) +
+  geom_hline(aes(yintercept = vip_threshold),color = "red",size = 0.5,linetype = "dashed") +
+  scale_x_continuous(breaks = pretty(vip.for.selection$time, n = 10))+
+  scale_y_continuous(breaks = pretty(vip.for.selection$vip, n = 10))+
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 12)+
+  theme(axis.text=element_text(face="bold"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=12, face="bold"),
+        axis.title.x = element_text(size=12, face="bold"),
+        axis.title.y = element_text(size=12, face="bold"))+
+  labs(x="Retention Time",y="VIP Score") +
+  ggtitle("Type 2 manhattan plot (VIP vs retention time)")
+
+# volcano <- vip.for.selection[,c(1,2,5,12)]
+# volcano$group <- ifelse(volcano$pvalue<=0.05&volcano$foldchange>=1,3,
+#                         ifelse(volcano$pvalue<=0.05&volcano$foldchange<=-1,2,
+#                                ifelse(volcano$pvalue<=0.05&abs(volcano$foldchange)<=1,1,0)))
+# volcano$size <- ifelse(volcano$group == 0,0,1)
+# 
+# ggplot2::ggplot(volcano,aes(x=foldchange,y=-log10(pvalue))) +
+#   geom_point(aes(colour=cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE) + 
+#   xlim(-3.3,3.3) +
+#   scale_fill_hue(c=20, l=20) + 
+#   scale_color_manual(values = c("#999999","goldenrod3","springgreen3","firebrick1")) + 
+#   scale_size_continuous(range = c(1,3)) +
+#   geom_hline(aes(yintercept = 1.30103),color = "black",size = 0.5,linetype = "dashed") +
+#   geom_vline(aes(xintercept = 1),color = "black",size = 0.5,linetype = "dashed") +
+#   geom_vline(aes(xintercept = -1),color = "black",size = 0.5,linetype = "dashed") +
+#   labs(x="Log2(Fold Change)",y="-Log10(P-value)") +
+#   # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+#   theme_bw(base_size = 12)+
+#   theme(axis.text=element_text(face="bold"),
+#         panel.grid.major.x = element_blank(),
+#         panel.grid.minor.x = element_blank(),
+#         plot.title = element_text(size=12, face="bold"),
+#         axis.title.x = element_text(size=12, face="bold"),
+#         axis.title.y = element_text(size=12, face="bold"))
+
+# Using significant features
+
+if(fs_mode == "lm"){
+  good_feats_ordered <- subset(vip.for.selection, pvalue < 0.05)
+} else if (fs_mode == "plslm"){
+  good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold & pvalue < 0.05)
+} else if (fs_mode == "plsda"){
+  good_feats_ordered <- subset(vip.for.selection,vip>=vip_threshold)
+} else if (fs_mode == "spls"){
+  good_feats_ordered <- subset(vip.for.selection,!is.na(spls_loading))
+} else {
+  good_feats_ordered <- subset(vip.for.selection,EN != 0)
+}
+
+print(paste("Combined:", sum(vip.for.selection$vip > vip_threshold & vip.for.selection$pvalue < 0.05), "features are significant (VIP>=", vip_threshold, "& Logistic regression Raw_P<=0.05)", sep = " "))
+
+good_feats_ordered.name <- {}
+for (i in 1:nrow(good_feats_ordered)) {
+  good_feats_ordered.name <- c(good_feats_ordered.name,which(colnames(X)==row.names(good_feats_ordered[i,])))
+}
+sig.X <- X[,c(good_feats_ordered.name)]
+
+# Save files
+save.plsresults.allfeatures <- cbind(vip.for.selection,t(X))
+# good_feats_ordered$rank <- 1:nrow(good_feats_ordered)
+save.plsresults.sigfeatures <- cbind(good_feats_ordered,t(sig.X))
+
+###############
+# Recalculate the FDR
+###############
+save.plsresults.sigfeatures$adjust_pvalue <- p.adjust(save.plsresults.sigfeatures$pvalue, method="BH")
+
+print(paste("Number of significant features:",nrow(save.plsresults.sigfeatures),sep = " "))
+
+print(paste("Number of PLSDA-selected features with FDR < 0.05:", sum(save.plsresults.sigfeatures$adjust_pvalue<0.05),sep = " "))
+print(paste("Number of PLSDA-selected features with FDR < 0.2:", sum(save.plsresults.sigfeatures$adjust_pvalue<0.2),sep = " "))
+```
+
+#### Annotation
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+annotation <- read.csv(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/xMSannotator_Stage4.csv", header = T)
+annotation <- annotation[which(annotation$Confidence >= 2),] ## only confidence score greater than 2
+
+annotation$mz <- round(annotation$mz, 4)
+annotation$time <- round(annotation$time, 1)
+save.plsresults.sigfeatures$mz <- round(save.plsresults.sigfeatures$mz, 4)
+save.plsresults.sigfeatures$time <- round(save.plsresults.sigfeatures$time, 1)
+
+save.annotation <- merge(save.plsresults.sigfeatures[,1:15], annotation, by = c("mz", "time"), all.x = T)
+
+######################
+# In-house library
+######################
+
+# library(xlsx)
+# 
+# tolerance = 5
+# 
+# C18_library <- read.xlsx(file = "/Users/qiyan/Dropbox/PEG/PD_Pest_MultiOmics/Raw_Data/InHouse_Library_Emory/Combined_comfirmed_metabolite_list_08032020.xlsx", 2, header = T) %>%
+#   distinct(KEGGID, .keep_all= TRUE)
+# C18_library$time <- as.numeric(C18_library$time)
+# 
+# linkID_c18neg$delta_mz = (tolerance) * (linkID_c18neg$mz/1e+06)
+# linkID_c18neg$min_mz = linkID_c18neg$mz - linkID_c18neg$delta_mz
+# linkID_c18neg$max_mz = linkID_c18neg$mz + linkID_c18neg$delta_mz
+# 
+# C18_verify <- data.frame()
+# for(i in 1:nrow(linkID_c18neg)){
+#   rownum <- which(C18_library$mz >= linkID_c18neg$min_mz[i] & C18_library$mz <= linkID_c18neg$max_mz[i] & abs(C18_library$time-linkID_c18neg$time[i]) < 30)
+#   if (length(rownum)!=0){
+#     temp <- cbind(linkID_c18neg[i,],C18_library[rownum,])
+#     C18_verify <- rbind(C18_verify, temp)
+#   }
+#   rm(temp)
+# }
+# 
+# C18_verify <- C18_verify[,c(2,3,15,16,11,9,10)]
+# colnames(C18_verify) <- c("mz","time","mz_library","time_library","Name","KEGGID","HMDBID")
+# 
+# write.table(C18_verify, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/C18_verified_features.txt", sep = "\t", row.names = F,quote = F)
+
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/C18_verified_features.RData")
+
+C18_verify$mz <- round(C18_verify$mz, 4)
+C18_verify$time <- round(C18_verify$time, 1)
+
+save.annotation <- merge(save.annotation, C18_verify, by = c("mz", "time"), all.x = T)
+```
+
+#### Mummichog
+
+Use PLSR VIP >= 2 and Pearson correlaiton raw P-value <= 0.05 as the threshold.
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+###################################################
+### Prepare for mummichog
+###################################################
+
+save.mummichog_PLS_VIP2 <- save.plsresults.allfeatures[,c(2,3,6,7)]
+save.mummichog_PLS_VIP2$"p-value" = 0.051
+
+# save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold&save.mummichog_PLS_VIP2$`pvalue.datExpr$pvalue`<pvalue_threshold] <- 0.04
+save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <- 0.04
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
+save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,5,4)]
+
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/C18neg_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
+write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/C18neg_MWAS_result.RData", sep = ""))
+```
+
+### Final table
+
+```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+final_table <- function(mwas_data, wd_pathway){
+    ####################
+    # pathway analysis - mummichog server
+    ####################
+    setwd(wd_pathway)
+    mummichog_input <- read.table(file = "userInputData.txt", sep = "\t", header = T)
+    mummichog_pathway <- read.xlsx(file = "mcg_pathwayanalysis_.xlsx", 1, header = T)
+    mummichog_empirical <- read.table(file = "ListOfEmpiricalCompounds.tsv", sep = "\t", header = T)
+    mummichog_link <- read.xlsx(file = "mcg_pathwayanalysis_.xlsx", 2, header = T)    # second sheet copied from the web, is the link between feature and name
+    
+    # rearrange the link table
+    flag <- which(grepl(pattern = "E", x = as.character(mummichog_link[,1])))
+    temp <- mummichog_link[flag,]
+    temp <- temp[,c(1,2,4)]
+    colnames(temp) <- c("EmpiricalCompound", "CompoundName", "KEGGID")
+    mummichog_link$EmpiricalCompound <- na.locf(mummichog_link$EmpiricalCompound)
+    mummichog_link <- mummichog_link[-flag,]
+    mummichog_link <- merge(x = mummichog_link, y = temp, by = "EmpiricalCompound", all.x = T)
+    rm(temp,flag)
+    
+    # rearrange pathway data from wide to long
+    mummichog_pathway <- mummichog_pathway[which(mummichog_pathway$p.value<=0.05),]  #add overlap size or not
+    mummichog_pathway_expand <- data.frame()
+    for(i in 1:nrow(mummichog_pathway)){
+      temp <- mummichog_pathway[i,]
+      temp.compound <- as.character(temp$overlap_EmpiricalCompounds..id.)
+      temp.compound <- as.data.frame(unlist(strsplit(temp.compound, ",")))
+      temp.rest <- temp[,c(1:4)]
+      temp.merge <- merge(x = temp.rest, y = temp.compound, all.y = T)
+      mummichog_pathway_expand <- rbind(mummichog_pathway_expand, temp.merge)
+    }
+    colnames(mummichog_pathway_expand) <- c("pathway", "overlap_size", "pathway_size", "p.value", "EmpiricalCompound")
+    rm(temp, temp.compound, temp.merge, temp.rest)
+    
+    # combine pathway with link
+    mummichog_pathway_complete <- merge(mummichog_link, mummichog_pathway_expand, by = "EmpiricalCompound", all = T)
+    if(length(which(is.na(mummichog_pathway_complete$pathway))) != 0){
+      mummichog_pathway_complete <- mummichog_pathway_complete[-which(is.na(mummichog_pathway_complete$pathway)),]
+    }
+    mummichog_pathway_complete <- mummichog_pathway_complete[order(mummichog_pathway_complete$pathway),]
+    
+    names(mummichog_pathway_complete)[names(mummichog_pathway_complete) == "Input.m.z"] <- "mz"
+    names(mummichog_pathway_complete)[names(mummichog_pathway_complete) == "Retention.time"] <- "time"
+    
+    mummichog_pathway_complete$time <- round(as.numeric(as.character(mummichog_pathway_complete$time)), 1)
+    mummichog_pathway_complete$mz <- round(as.numeric(as.character(mummichog_pathway_complete$mz)), 4)
+    
+    ####################
+    # combine datasets
+    ####################
+    load(file = mwas_data)
+    merge_all <- merge(save.annotation, mummichog_pathway_complete, by = c("mz", "time"), all.x = T)
+    return(merge_all)
+}
+```
+
+```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+HILIC <- final_table(mwas_data = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/HILICpos_MWAS_result.RData", sep = ""), wd_pathway = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/hilicpos/tables/", sep = ""))
+
+C18 <- final_table(mwas_data = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/C18neg_MWAS_result.RData", sep = ""), wd_pathway = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/c18neg/tables/", sep = ""))
+
+write.table(HILIC, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/HILIC_final_table.txt", sep = ""), sep = "\t", row.names = F,quote = F)
+write.table(C18, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/C18_final_table.txt", sep = ""), sep = "\t", row.names = F,quote = F)
+```
+
 # Targeted analysis
 
 ### HILICpos
@@ -3066,7 +3918,7 @@ fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
 
 feature_w_cov <- cbind(class_use_noOUT, X)
 
-lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign), data = feature_w_cov, family = "binomial")
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
 
 feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
 
@@ -3114,7 +3966,7 @@ feature_pvalue <- cbind(feature_pvalue, fc.updown)
 feature_pvalue <- cbind(linkid, feature_pvalue) %>%
   dplyr::left_join(HILIC_verify, by = c("mz", "time"))
 
-write.table(feature_pvalue, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Targeted/targeted_hilic.txt", row.names = F, quote = F)
+write.table(feature_pvalue, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Targeted/targeted_hilic.txt", row.names = F, quote = F, sep = "\t")
 ```
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
@@ -3180,7 +4032,7 @@ fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
 
 feature_w_cov <- cbind(class_use_noOUT, X)
 
-lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign), data = feature_w_cov, family = "binomial")
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
 
 feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
 
@@ -3228,7 +4080,7 @@ feature_pvalue <- cbind(feature_pvalue, fc.updown)
 feature_pvalue <- cbind(linkid, feature_pvalue) %>%
   dplyr::left_join(C18_verify, by = c("mz", "time"))
 
-write.table(feature_pvalue, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Targeted/targeted_c18.txt", row.names = F, quote = F)
+write.table(feature_pvalue, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Targeted/targeted_c18.txt", row.names = F, quote = F, sep = "\t")
 ```
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
