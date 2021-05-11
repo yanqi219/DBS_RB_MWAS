@@ -1531,7 +1531,7 @@ ggheatmap +
                                title.position = "top", title.hjust = -1))
 ```
 
-## Cotanine
+## Cotinine
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
 load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_AP/Input/DBS_241_WaveICA_AP.RData")
