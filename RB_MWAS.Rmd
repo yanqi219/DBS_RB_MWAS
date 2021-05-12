@@ -721,7 +721,7 @@ cor_value <- WGCNA::bicorAndPvalue(x = cov_matrix, y = PC_matrix, use = "pairwis
 edge_list <- cor_value$cor
 p_value <- cor_value$p
 p_value <- ifelse(p_value > 0.1, 1, ifelse(p_value > 0.05, 2, ifelse(p_value > 0.01, 3, ifelse(p_value > 0.001, 4, 5))))
-rownames(p_value) <- c("Case", "MRaceShort", "birthyear", "MotherAge", "QUINYOST_birth", "parity", "GestWeeks", "meduc", "foreign")
+rownames(p_value) <- c("Case", "MRaceShort", "birthyear", "MotherAge", "QUINYOST_birth", "parity", "GestWeeks", "meduc", "foreign", "sex")
 
 # Try to draw a heatmap https://jokergoo.github.io/ComplexHeatmap-reference/book/a-single-heatmap.html#spilt-by-dendrogram
 library(ComplexHeatmap)
@@ -730,7 +730,7 @@ ha <- HeatmapAnnotation(variance = anno_barplot(pca.datExpr$explained_variance[1
 
 colors = structure(c("white", "#ffc4c4", "#ff8989", "#ff3b3b", "#b10000"), names = c("1", "2", "3", "4", "5"))
 ComplexHeatmap::Heatmap(p_value, show_row_names = T, show_column_names = T, cluster_rows = FALSE, cluster_columns = FALSE, 
-                        col = colors, width = unit(24, "cm"), height = unit(5, "cm"),
+                        col = colors, width = unit(24, "cm"), height = unit(6, "cm"),
                         row_names_side = "left", top_annotation = ha)
 ```
 
@@ -1362,6 +1362,10 @@ write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F
 save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_MWAS_result.RData")
 ```
 
+```{bash, engine.opts='-l'}
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_mummichog_input_vip1.5p0.txt -m dpj -c 0.05
+```
+
 ### C18neg
 
 ```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
@@ -1869,6 +1873,10 @@ write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F
 save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_MWAS_result.RData")
 ```
 
+```{bash, engine.opts='-l'}
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_mummichog_input_vip1.5p0.txt -m negative -c 0.05
+```
+
 ### Final table
 
 ```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
@@ -2249,133 +2257,6 @@ print(paste("Number of PLSDA-selected features with FDR < 0.05:", sum(save.plsre
 print(paste("Number of PLSDA-selected features with FDR < 0.2:", sum(save.plsresults.sigfeatures$adjust_pvalue<0.2),sep = " "))
 ```
 
-Assess the performance of selected features.
-
-```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
-good_feats_ordered.name <- {}
-for (i in 1:nrow(good_feats_ordered)) {
-  good_feats_ordered.name <- c(good_feats_ordered.name,which(colnames(X)==row.names(good_feats_ordered[i,])))
-}
-sig.X <- X_residual[,c(good_feats_ordered.name)]
-
-# PLSDA using significant features
-print("PLS-DA using significant features")
-sig.datExpr.plsda <- plsda(sig.X, Y, ncomp = 10) # set ncomp to 10 for performance assessment later
-plotIndiv(sig.datExpr.plsda, comp = 1:2,
-          group = Y, ind.names = FALSE, 
-          ellipse = TRUE, legend = TRUE, title = 'PLS score using significant features')
-
-# Plot PLS1 vs. PLS2 with background using significant features
-background = background.predict(sig.datExpr.plsda, comp.predicted=2, dist = "max.dist")
-plotIndiv(sig.datExpr.plsda, comp = 1:2,
-          group = Y, ind.names = FALSE, title = "PLS score using significant features (Maximum distance)", ellipse = TRUE,
-          legend = TRUE,  background = background)
-
-# Assess the preformance of PLSDA using significant features
-print("Assess the preformance")
-set.seed(1106)
-cpu = 4
-nrepeat = 20
-system.time(
-  sig.perf.plsda.datExpr <- perf(sig.datExpr.plsda, validation = "Mfold", folds = 5,   ## 5 fold CV
-                                 progressBar = TRUE, auc = TRUE, nrepeat = nrepeat, cpus = cpu)
-)
-
-# get ROC curve using significant features
-print("Generating ROC curve using top features on training set")
-source("/Users/QiYan/Dropbox/AIME/Archive/get_roc.R")
-roc.dataA <- t(sig.X)
-get_roc(dataA=roc.dataA,classlabels=Y,classifier="svm",kname="radial",
-        rocfeatlist=seq(2,10,1),rocfeatincrement=TRUE,mainlabel="Training set ROC curve using top features")
-print("ROC done")
-
-# get CV accuracy using significant features via SVM
-print("get k-fold CV accuracy")
-source("/Users/QiYan/Dropbox/AIME/Archive/svm_cv.R")
-pred.eval.method = "BER"
-xvec<-{}
-yvec<-{}
-best_acc<-0
-for(i in 2:nrow(roc.dataA)){
-  subdata<-t(roc.dataA[1:i,])
-  svm_model<-try(svm_cv(v=5,x=subdata,y=Y,kname="radial",
-                        errortype=pred.eval.method,conflevel=95))
-  if(is(svm_model,"try-error")){
-    svm_model<-NA
-  }else{
-    xvec<-c(xvec,i)
-    yvec<-c(yvec,svm_model$avg_acc)
-    if(svm_model$avg_acc>best_acc){
-      best_acc<-svm_model$avg_acc
-      best_subset<-seq(1,i)
-    }
-    if(svm_model$avg_acc<best_acc){
-      diff_acc<-best_acc-svm_model$avg_acc
-      if(diff_acc>50){
-        break;
-      }
-    }
-  }
-}
-
-if(pred.eval.method=="CV"){
-  ylab_text=paste(pred.eval.method," accuracy (%)",sep="")
-}else{
-  if(pred.eval.method=="BER"){
-    ylab_text=paste("Balanced accuracy"," (%)",sep="")
-  }else{
-    ylab_text=paste("AUC"," (%)",sep="")
-  }
-}
-
-if(length(yvec)>0){
-  plot(x=xvec,y=yvec,main="k-fold CV classification accuracy based on forward selection of top features",xlab="Feature index",ylab=ylab_text,type="b",col="brown")
-  
-  cv_mat<-cbind(xvec,yvec)
-  colnames(cv_mat)<-c("Feature Index",ylab_text)
-  
-  # write.table(cv_mat,file="kfold_cv_mat.txt",sep="\t")
-}
-
-cv.acc.sigfeats <- svm_model$avg_acc
-print(paste(paste("K-fold CV accuracy is",cv.acc.sigfeats,sep = " "),"%",sep = ""))
-
-#permutation test
-print("Calculating permuted CV accuracy")
-cv.acc.permut<-{}
-subdata <- t(roc.dataA)
-cv.acc.permut<-lapply(1:100,function(j){
-  rand_order<-sample(1:dim(as.data.frame(Y))[1],size=dim(as.data.frame(Y))[1])
-  classlabels_permut<-as.data.frame(Y)[rand_order,]
-  classlabels_permut<-as.data.frame(classlabels_permut)
-  svm_permut_res<-svm_cv(v=5,x=subdata,y=classlabels_permut,kname="radial",errortype=pred.eval.method,conflevel=95)
-  return(svm_permut_res$avg_acc)
-})
-
-cv.acc.permut<-unlist(cv.acc.permut)
-cv.acc.permut<-mean(cv.acc.permut,na.rm=TRUE)
-cv.acc.permut<-round(cv.acc.permut,2)
-
-print(paste(paste("mean Permuted accuracy is:",cv.acc.permut,sep = " "),"%",sep = ""))
-
-# Plot var plot for permutation test
-bar <- as.data.frame(c(cv.acc.sigfeats,cv.acc.permut))
-bar$name <- c("Actual","Permutated")
-colnames(bar) <- c("value","name")
-bar$value <- round(bar$value,2)
-ggplot2::ggplot(bar, aes(x=name, y=value)) +
-  geom_bar(stat = "identity",aes(fill = as.factor(name)),width = 0.5,show.legend = FALSE) +
-  geom_text(aes(label=value),vjust=-0.3, size=4) +
-  labs(title = "5-fold CV accuracy and permutation test",x = element_blank(),y = "Accuracy (%)") +
-  theme_light(base_size = 12)
-
-# Two-way HCA
-print("Two-way HCA")
-source("/Users/QiYan/Dropbox/AIME/Archive/get_hca.R")
-cluster.method = "dist" #"dist" or "bicor" #Residual can only use "dist"
-get_hca(data_m = sig.X,classlabels = Y,is.data.znorm = FALSE,clu.method = cluster.method)
-```
-
 #### Annotation
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
@@ -2451,6 +2332,10 @@ write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
 save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/HILICpos_MWAS_result.RData", sep = ""))
+```
+
+```{bash, engine.opts='-l'}
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Bilateral -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Bilateral/HILICpos_mummichog_input_vip1.5p0.txt -m dpj -c 0.05
 ```
 
 ### C18neg
@@ -2763,133 +2648,6 @@ print(paste("Number of PLSDA-selected features with FDR < 0.05:", sum(save.plsre
 print(paste("Number of PLSDA-selected features with FDR < 0.2:", sum(save.plsresults.sigfeatures$adjust_pvalue<0.2),sep = " "))
 ```
 
-Assess the performance of selected features.
-
-```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
-good_feats_ordered.name <- {}
-for (i in 1:nrow(good_feats_ordered)) {
-  good_feats_ordered.name <- c(good_feats_ordered.name,which(colnames(X)==row.names(good_feats_ordered[i,])))
-}
-sig.X <- X_residual[,c(good_feats_ordered.name)]
-
-# PLSDA using significant features
-print("PLS-DA using significant features")
-sig.datExpr.plsda <- plsda(sig.X, Y, ncomp = 10) # set ncomp to 10 for performance assessment later
-plotIndiv(sig.datExpr.plsda, comp = 1:2,
-          group = Y, ind.names = FALSE, 
-          ellipse = TRUE, legend = TRUE, title = 'PLS score using significant features')
-
-# Plot PLS1 vs. PLS2 with background using significant features
-background = background.predict(sig.datExpr.plsda, comp.predicted=2, dist = "max.dist")
-plotIndiv(sig.datExpr.plsda, comp = 1:2,
-          group = Y, ind.names = FALSE, title = "PLS score using significant features (Maximum distance)", ellipse = TRUE,
-          legend = TRUE,  background = background)
-
-# Assess the preformance of PLSDA using significant features
-print("Assess the preformance")
-set.seed(1106)
-cpu = 4
-nrepeat = 20
-system.time(
-  sig.perf.plsda.datExpr <- perf(sig.datExpr.plsda, validation = "Mfold", folds = 5,   ## 5 fold CV
-                                 progressBar = TRUE, auc = TRUE, nrepeat = nrepeat, cpus = cpu)
-)
-
-# get ROC curve using significant features
-print("Generating ROC curve using top features on training set")
-source("/Users/QiYan/Dropbox/AIME/Archive/get_roc.R")
-roc.dataA <- t(sig.X)
-get_roc(dataA=roc.dataA,classlabels=Y,classifier="svm",kname="radial",
-        rocfeatlist=seq(2,10,1),rocfeatincrement=TRUE,mainlabel="Training set ROC curve using top features")
-print("ROC done")
-
-# get CV accuracy using significant features via SVM
-print("get k-fold CV accuracy")
-source("/Users/QiYan/Dropbox/AIME/Archive/svm_cv.R")
-pred.eval.method = "BER"
-xvec<-{}
-yvec<-{}
-best_acc<-0
-for(i in 2:nrow(roc.dataA)){
-  subdata<-t(roc.dataA[1:i,])
-  svm_model<-try(svm_cv(v=5,x=subdata,y=Y,kname="radial",
-                        errortype=pred.eval.method,conflevel=95))
-  if(is(svm_model,"try-error")){
-    svm_model<-NA
-  }else{
-    xvec<-c(xvec,i)
-    yvec<-c(yvec,svm_model$avg_acc)
-    if(svm_model$avg_acc>best_acc){
-      best_acc<-svm_model$avg_acc
-      best_subset<-seq(1,i)
-    }
-    if(svm_model$avg_acc<best_acc){
-      diff_acc<-best_acc-svm_model$avg_acc
-      if(diff_acc>50){
-        break;
-      }
-    }
-  }
-}
-
-if(pred.eval.method=="CV"){
-  ylab_text=paste(pred.eval.method," accuracy (%)",sep="")
-}else{
-  if(pred.eval.method=="BER"){
-    ylab_text=paste("Balanced accuracy"," (%)",sep="")
-  }else{
-    ylab_text=paste("AUC"," (%)",sep="")
-  }
-}
-
-if(length(yvec)>0){
-  plot(x=xvec,y=yvec,main="k-fold CV classification accuracy based on forward selection of top features",xlab="Feature index",ylab=ylab_text,type="b",col="brown")
-  
-  cv_mat<-cbind(xvec,yvec)
-  colnames(cv_mat)<-c("Feature Index",ylab_text)
-  
-  # write.table(cv_mat,file="kfold_cv_mat.txt",sep="\t")
-}
-
-cv.acc.sigfeats <- svm_model$avg_acc
-print(paste(paste("K-fold CV accuracy is",cv.acc.sigfeats,sep = " "),"%",sep = ""))
-
-#permutation test
-print("Calculating permuted CV accuracy")
-cv.acc.permut<-{}
-subdata <- t(roc.dataA)
-cv.acc.permut<-lapply(1:100,function(j){
-  rand_order<-sample(1:dim(as.data.frame(Y))[1],size=dim(as.data.frame(Y))[1])
-  classlabels_permut<-as.data.frame(Y)[rand_order,]
-  classlabels_permut<-as.data.frame(classlabels_permut)
-  svm_permut_res<-svm_cv(v=5,x=subdata,y=classlabels_permut,kname="radial",errortype=pred.eval.method,conflevel=95)
-  return(svm_permut_res$avg_acc)
-})
-
-cv.acc.permut<-unlist(cv.acc.permut)
-cv.acc.permut<-mean(cv.acc.permut,na.rm=TRUE)
-cv.acc.permut<-round(cv.acc.permut,2)
-
-print(paste(paste("mean Permuted accuracy is:",cv.acc.permut,sep = " "),"%",sep = ""))
-
-# Plot var plot for permutation test
-bar <- as.data.frame(c(cv.acc.sigfeats,cv.acc.permut))
-bar$name <- c("Actual","Permutated")
-colnames(bar) <- c("value","name")
-bar$value <- round(bar$value,2)
-ggplot2::ggplot(bar, aes(x=name, y=value)) +
-  geom_bar(stat = "identity",aes(fill = as.factor(name)),width = 0.5,show.legend = FALSE) +
-  geom_text(aes(label=value),vjust=-0.3, size=4) +
-  labs(title = "5-fold CV accuracy and permutation test",x = element_blank(),y = "Accuracy (%)") +
-  theme_light(base_size = 12)
-
-# Two-way HCA
-print("Two-way HCA")
-source("/Users/QiYan/Dropbox/AIME/Archive/get_hca.R")
-cluster.method = "dist" #"dist" or "bicor" #Residual can only use "dist"
-get_hca(data_m = sig.X,classlabels = Y,is.data.znorm = FALSE,clu.method = cluster.method)
-```
-
 #### Annotation
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
@@ -2967,6 +2725,10 @@ write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F
 save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/C18neg_MWAS_result.RData", sep = ""))
 ```
 
+```{bash, engine.opts='-l'}
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Unilateral -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Unilateral/C18neg_mummichog_input_vip1.5p0.txt -m negative -c 0.05
+```
+
 ### Final table
 
 ```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
@@ -3035,6 +2797,77 @@ write.table(HILIC, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastom
 write.table(C18, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/C18_final_table.txt", sep = ""), sep = "\t", row.names = F,quote = F)
 ```
 
+### Summary
+
+```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+# Draw Venn diagram, compaer it w/ full population
+
+## Full population
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_MWAS_result.RData")
+full_hilic <- rownames(save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Unilateral/HILICpos_MWAS_result.RData")
+uni_hilic <- rownames(save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Bilateral/HILICpos_MWAS_result.RData")
+bi_hilic <- rownames(save.plsresults.sigfeatures)
+
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_MWAS_result.RData")
+full_c18 <- rownames(save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Unilateral/C18neg_MWAS_result.RData")
+uni_c18 <- rownames(save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Bilateral/C18neg_MWAS_result.RData")
+bi_c18 <- rownames(save.plsresults.sigfeatures)
+
+library(VennDiagram)
+ 
+#Make the plot
+venn.diagram(
+  x = list(full_hilic, uni_hilic, bi_hilic),
+  category.names = c("Full", "Unilateral", "Bilateral"),
+  filename = '/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Figures/venn_type_hilic.png',
+  output = TRUE ,
+          imagetype="png" ,
+          height = 1000 , 
+          width = 1000 , 
+          resolution = 750,
+          compression = "lzw",
+          lwd = 1,
+          col=c("#440154ff", '#21908dff', '#fde725ff'),
+          fill = c(alpha("#440154ff",0.3), alpha('#21908dff',0.3), alpha('#fde725ff',0.3)),
+          cex = 0.5,
+          fontfamily = "sans",
+          cat.cex = 0.3,
+          cat.default.pos = "outer",
+          cat.pos = c(-27, 27, 135),
+          cat.dist = c(0.055, 0.055, 0.085),
+          cat.fontfamily = "sans",
+          cat.col = c("#440154ff", '#21908dff', '#fde725ff'),
+          rotation = 1
+        )
+venn.diagram(
+  x = list(full_c18, uni_c18, bi_c18),
+  category.names = c("Full", "Unilateral", "Bilateral"),
+  filename = '/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Figures/venn_type_c18.png',
+  output = TRUE ,
+          imagetype="png" ,
+          height = 1000 , 
+          width = 1000 , 
+          resolution = 750,
+          compression = "lzw",
+          lwd = 1,
+          col=c("#440154ff", '#21908dff', '#fde725ff'),
+          fill = c(alpha("#440154ff",0.3), alpha('#21908dff',0.3), alpha('#fde725ff',0.3)),
+          cex = 0.5,
+          fontfamily = "sans",
+          cat.cex = 0.3,
+          cat.default.pos = "outer",
+          cat.pos = c(-27, 27, 135),
+          cat.dist = c(0.055, 0.055, 0.085),
+          cat.fontfamily = "sans",
+          cat.col = c("#440154ff", '#21908dff', '#fde725ff'),
+          rotation = 1
+        )
+```
+
 ## Stratified by sex
 
 ### HILICpos
@@ -3043,12 +2876,12 @@ write.table(C18, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/
 load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
 rm(HILICpos_QC, linkID_hilicpos, linkSub_QC_hilicpos, linkSub_use_hilicpos) # This is a non-scaled version, for fold change
 
-load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB_noSex.RData")
 class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
 
 # Statified by sex
-type = "male"
-class_use_noOUT <- class_use_noOUT[which(class_use_noOUT$sex==1),]
+type = "Female"
+class_use_noOUT <- class_use_noOUT[which(class_use_noOUT$sex==2),]
 table(class_use_noOUT$Case_Control_Status)
 HILICpos_norm_t_noOUt <- HILICpos_norm_t_noOUt[class_use_noOUT$hilicpos,]
 HILICpos_residual <- HILICpos_residual[class_use_noOUT$hilicpos,]
@@ -3072,7 +2905,7 @@ fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
 
 feature_w_cov <- cbind(class_use_noOUT, X)
 
-lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign), data = feature_w_cov, family = "binomial")
 
 feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
 
@@ -3087,7 +2920,7 @@ print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.2), "f
 print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
 
 # Effective number of testing (95% and 99%)
-pca.datExpr = mixOmics::pca(X, ncomp = 1000, center = TRUE, scale = TRUE)
+pca.datExpr = mixOmics::pca(X, ncomp = 650, center = TRUE, scale = TRUE)
 ent <- sum(pca.datExpr$explained_variance)
 ent <- summary(pca.datExpr)$cum.var
 ent95 <- 0.05/sum(ent<0.95)
@@ -3424,18 +3257,22 @@ write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F
 save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/HILICpos_MWAS_result.RData", sep = ""))
 ```
 
+```{bash, engine.opts='-l'}
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Female -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Female/HILICpos_mummichog_input_vip1.5p0.txt -m dpj -c 0.05
+```
+
 ### C18neg
 
 ```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
 load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
 rm(C18neg_QC, linkID_c18neg, linkSub_QC_c18neg, linkSub_use_c18neg) # This is a non-scaled version, for fold change
 
-load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB_noSex.RData")
 class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
 
 # Statified by sex
-type = "male"
-class_use_noOUT <- class_use_noOUT[which(class_use_noOUT$sex==1),]
+type = "Female"
+class_use_noOUT <- class_use_noOUT[which(class_use_noOUT$sex==2),]
 table(class_use_noOUT$Case_Control_Status)
 C18neg_norm_t_noOUt <- C18neg_norm_t_noOUt[class_use_noOUT$hilicpos,]
 C18neg_residual <- C18neg_residual[class_use_noOUT$hilicpos,]
@@ -3459,7 +3296,7 @@ fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
 
 feature_w_cov <- cbind(class_use_noOUT, X)
 
-lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign), data = feature_w_cov, family = "binomial")
 
 feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
 
@@ -3474,7 +3311,7 @@ print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.2), "f
 print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
 
 # Effective number of testing (95% and 99%)
-pca.datExpr = mixOmics::pca(X, ncomp = 1000, center = TRUE, scale = TRUE)
+pca.datExpr = mixOmics::pca(X, ncomp = 650, center = TRUE, scale = TRUE)
 ent <- sum(pca.datExpr$explained_variance)
 ent <- summary(pca.datExpr)$cum.var
 ent95 <- 0.05/sum(ent<0.95)
@@ -3811,6 +3648,10 @@ write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F
 save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/C18neg_MWAS_result.RData", sep = ""))
 ```
 
+```{bash, engine.opts='-l'}
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Female -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Female/C18neg_mummichog_input_vip1.5p0.txt -m negative -c 0.05
+```
+
 ### Final table
 
 ```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
@@ -3877,6 +3718,77 @@ C18 <- final_table(mwas_data = paste("/Users/qiyan/Dropbox/Metabolomics_Retinobl
 
 write.table(HILIC, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/HILIC_final_table.txt", sep = ""), sep = "\t", row.names = F,quote = F)
 write.table(C18, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/", type, "/C18_final_table.txt", sep = ""), sep = "\t", row.names = F,quote = F)
+```
+
+### Summary
+
+```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+# Draw Venn diagram, compaer it w/ full population
+
+## Full population
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_MWAS_result.RData")
+full_hilic <- rownames(save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Male/HILICpos_MWAS_result.RData")
+male_hilic <- rownames(save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Female/HILICpos_MWAS_result.RData")
+female_hilic <- rownames(save.plsresults.sigfeatures)
+
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_MWAS_result.RData")
+full_c18 <- rownames(save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Male/C18neg_MWAS_result.RData")
+male_c18 <- rownames(save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Female/C18neg_MWAS_result.RData")
+female_c18 <- rownames(save.plsresults.sigfeatures)
+
+library(VennDiagram)
+ 
+#Make the plot
+venn.diagram(
+  x = list(full_hilic, male_hilic, female_hilic),
+  category.names = c("Full", "Male", "Female"),
+  filename = '/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Figures/venn_sex_hilic.png',
+  output = TRUE ,
+          imagetype="png" ,
+          height = 1000 , 
+          width = 1000 , 
+          resolution = 750,
+          compression = "lzw",
+          lwd = 1,
+          col=c("#440154ff", '#21908dff', '#fde725ff'),
+          fill = c(alpha("#440154ff",0.3), alpha('#21908dff',0.3), alpha('#fde725ff',0.3)),
+          cex = 0.5,
+          fontfamily = "sans",
+          cat.cex = 0.3,
+          cat.default.pos = "outer",
+          cat.pos = c(-27, 27, 135),
+          cat.dist = c(0.055, 0.055, 0.085),
+          cat.fontfamily = "sans",
+          cat.col = c("#440154ff", '#21908dff', '#fde725ff'),
+          rotation = 1
+        )
+venn.diagram(
+  x = list(full_c18, male_c18, female_c18),
+  category.names = c("Full", "Male", "Female"),
+  filename = '/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Figures/venn_sex_c18.png',
+  output = TRUE ,
+          imagetype="png" ,
+          height = 1000 , 
+          width = 1000 , 
+          resolution = 750,
+          compression = "lzw",
+          lwd = 1,
+          col=c("#440154ff", '#21908dff', '#fde725ff'),
+          fill = c(alpha("#440154ff",0.3), alpha('#21908dff',0.3), alpha('#fde725ff',0.3)),
+          cex = 0.5,
+          fontfamily = "sans",
+          cat.cex = 0.3,
+          cat.default.pos = "outer",
+          cat.pos = c(-27, 27, 135),
+          cat.dist = c(0.055, 0.055, 0.085),
+          cat.fontfamily = "sans",
+          cat.col = c("#440154ff", '#21908dff', '#fde725ff'),
+          rotation = 1
+        )
 ```
 
 # Targeted analysis
@@ -4081,6 +3993,250 @@ feature_pvalue <- cbind(linkid, feature_pvalue) %>%
   dplyr::left_join(C18_verify, by = c("mz", "time"))
 
 write.table(feature_pvalue, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Targeted/targeted_c18.txt", row.names = F, quote = F, sep = "\t")
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+sig <- feature_pvalue[which(feature_pvalue$pvalue < 0.05),] %>%
+  dplyr::distinct(met, .keep_all=T)
+data <- X_residual[,sig$met]
+colnames(data) <- sig$Name
+data <- cbind(data,class_use_noOUT)
+
+for (i in sig$Name) {
+  print(i)
+  print(data %>%
+          ggplot(aes(x=Case_Control_Status, y=data[[i]], fill=Case_Control_Status)) +
+          geom_boxplot() +
+          viridis::scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+          geom_jitter(color="black", size=0.4, alpha=0.9) +
+          hrbrthemes::theme_ipsum() +
+          theme(
+            legend.position="none",
+            plot.title = element_text(size=11)
+          ) +
+          ggtitle(i) +
+          xlab("") +
+          ylab("") +
+          stat_compare_means(method = "t.test"))
+}
+```
+
+# Targeted analysis - stratified by type
+
+### HILICpos
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
+rm(HILICpos_QC, linkID_hilicpos, linkSub_QC_hilicpos, linkSub_use_hilicpos) # This is a non-scaled version, for fold change
+
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
+
+# Statified by type
+type = "Bilateral"
+class_use_noOUT <- class_use_noOUT[which(!is.na(class_use_noOUT$Bilateral)),]
+table(class_use_noOUT$Case_Control_Status)
+HILICpos_norm_t_noOUt <- HILICpos_norm_t_noOUt[class_use_noOUT$hilicpos,]
+HILICpos_residual <- HILICpos_residual[class_use_noOUT$hilicpos,]
+
+# Targeted
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/hilicpos/HILIC_verified_features.RData")
+HILIC_verify$mz <- round(HILIC_verify$mz, 4)
+HILIC_verify$time <- round(HILIC_verify$time, 1)
+linkID_hilicpos$mz <- round(linkID_hilicpos$mz, 4)
+linkID_hilicpos$time <- round(linkID_hilicpos$time, 1)
+linkID_hilicpos$met <- rownames(linkID_hilicpos)
+target <- merge(linkID_hilicpos, HILIC_verify, by = c("mz", "time"))
+  
+group <- "Case_Control_Status"
+
+X <- HILICpos_norm_t_noOUt[,unique(target$met)]
+X_residual <- HILICpos_residual[,unique(target$met)]
+X_fc <- HILICpos_use_t[rownames(X),unique(target$met)]
+Y <- class_use_noOUT[[group]]
+# Y <- factor(Y, levels=c(0,1),labels=c("Control","Case"))
+linkid <- linkID_hilicpos[unique(target$met),]
+
+vip_threshold <- 1.5
+
+fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
+
+###################################################
+### GLM
+###################################################
+
+feature_w_cov <- cbind(class_use_noOUT, X)
+
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
+
+feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
+
+# feature_pvalue <- cbind(linkid,feature_pvalue)
+# colnames(feature_pvalue) <- c("mz","time","coef","pvalue")
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+feature_pvalue$adjust_pvalue <- p.adjust(feature_pvalue$pvalue, method="BH")
+
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= 0.05), "features are significant (raw_p<=0.05)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.2), "features are significant (adj_p<=0.2)", sep = " "))
+
+# Effective number of testing (95% and 99%)
+pca.datExpr = mixOmics::pca(X, ncomp = 80, center = TRUE, scale = TRUE)
+ent <- sum(pca.datExpr$explained_variance)
+ent <- summary(pca.datExpr)$cum.var
+ent95 <- 0.05/sum(ent<0.95)
+ent99 <- 0.05/sum(ent<0.99)
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= ent95), "features are significant (ENT95)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= ent99), "features are significant (ENT99)", sep = " "))
+
+rm(fit_feature_summary, fit_feature)
+
+###################################################
+# Fold Change
+###################################################
+
+fc.empty <- data.frame()
+for(i in 1:ncol(X_fc)){
+  case.temp <- X_fc[which(as.character(Y) == "Case"),i]
+  case <- mean(case.temp[!(abs(case.temp - median(case.temp)) > 2*sd(case.temp))])
+  control.temp <- X_fc[which(as.character(Y) == "Control"),i]
+  control <- mean(control.temp[!(abs(control.temp - median(control.temp)) > 2*sd(control.temp))])
+  fc.empty[i,1] <- case
+  fc.empty[i,2] <- control
+}
+colnames(fc.empty) <- c("case","control")
+fc.empty$foldchange = fc.empty$case-fc.empty$control
+fc.updown <- fc.empty
+rownames(fc.updown) <- colnames(X_fc)
+rm(fc.empty,case,case.temp,control, control.temp)
+
+feature_pvalue <- cbind(feature_pvalue, fc.updown)
+
+feature_pvalue <- cbind(linkid, feature_pvalue) %>%
+  dplyr::left_join(HILIC_verify, by = c("mz", "time"))
+
+write.table(feature_pvalue, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Targeted/", type, "/targeted_hilic.txt", sep = ""), row.names = F, quote = F, sep = "\t")
+```
+
+```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+sig <- feature_pvalue[which(feature_pvalue$pvalue < 0.05),] %>%
+  dplyr::distinct(met, .keep_all=T)
+data <- X_residual[,sig$met]
+colnames(data) <- sig$Name
+data <- cbind(data,class_use_noOUT)
+
+for (i in sig$Name) {
+  print(i)
+  print(data %>%
+    ggplot(aes(x=Case_Control_Status, y=data[[i]], fill=Case_Control_Status)) +
+    geom_boxplot() +
+    viridis::scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    hrbrthemes::theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)
+    ) +
+    ggtitle(i) +
+    xlab("") +
+    ylab("") +
+    stat_compare_means(method = "t.test"))
+}
+```
+
+### C18neg
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
+rm(C18neg_QC, linkID_c18neg, linkSub_QC_c18neg, linkSub_use_c18neg) # This is a non-scaled version, for fold change
+
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
+
+# Statified by type
+type = "Bilateral"
+class_use_noOUT <- class_use_noOUT[which(!is.na(class_use_noOUT$Bilateral)),]
+table(class_use_noOUT$Case_Control_Status)
+C18neg_norm_t_noOUt <- C18neg_norm_t_noOUt[class_use_noOUT$c18neg,]
+C18neg_ridual <- C18neg_residual[class_use_noOUT$c18neg,]
+
+# Targeted
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/C18_verified_features.RData")
+C18_verify$mz <- round(C18_verify$mz, 4)
+C18_verify$time <- round(C18_verify$time, 1)
+linkID_c18neg$mz <- round(linkID_c18neg$mz, 4)
+linkID_c18neg$time <- round(linkID_c18neg$time, 1)
+linkID_c18neg$met <- rownames(linkID_c18neg)
+target <- merge(linkID_c18neg, C18_verify, by = c("mz", "time"))
+
+group <- "Case_Control_Status"
+
+X <- C18neg_norm_t_noOUt[,unique(target$met)]
+X_residual <- C18neg_residual[,unique(target$met)]
+X_fc <- C18neg_use_t[rownames(X),unique(target$met)]
+Y <- class_use_noOUT[[group]]
+# Y <- factor(Y, levels=c(0,1),labels=c("Control","Case"))
+linkid <- linkID_c18neg[unique(target$met),]
+
+vip_threshold <- 1.5
+
+fs_mode <- "plsda" ## "lm", "en", "spls", "plsda", or "plslm"
+
+###################################################
+### GLM
+###################################################
+
+feature_w_cov <- cbind(class_use_noOUT, X)
+
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
+
+feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
+
+# feature_pvalue <- cbind(linkid,feature_pvalue)
+# colnames(feature_pvalue) <- c("mz","time","coef","pvalue")
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+feature_pvalue$adjust_pvalue <- p.adjust(feature_pvalue$pvalue, method="BH")
+
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= 0.05), "features are significant (raw_p<=0.05)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.2), "features are significant (adj_p<=0.2)", sep = " "))
+
+# Effective number of testing (95% and 99%)
+pca.datExpr = mixOmics::pca(X, ncomp = 80, center = TRUE, scale = TRUE)
+ent <- sum(pca.datExpr$explained_variance)
+ent <- summary(pca.datExpr)$cum.var
+ent95 <- 0.05/sum(ent<0.95)
+ent99 <- 0.05/sum(ent<0.99)
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= ent95), "features are significant (ENT95)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= ent99), "features are significant (ENT99)", sep = " "))
+
+rm(fit_feature_summary, fit_feature)
+
+###################################################
+# Fold Change
+###################################################
+
+fc.empty <- data.frame()
+for(i in 1:ncol(X_fc)){
+  case.temp <- X_fc[which(as.character(Y) == "Case"),i]
+  case <- mean(case.temp[!(abs(case.temp - median(case.temp)) > 2*sd(case.temp))])
+  control.temp <- X_fc[which(as.character(Y) == "Control"),i]
+  control <- mean(control.temp[!(abs(control.temp - median(control.temp)) > 2*sd(control.temp))])
+  fc.empty[i,1] <- case
+  fc.empty[i,2] <- control
+}
+colnames(fc.empty) <- c("case","control")
+fc.empty$foldchange = fc.empty$case-fc.empty$control
+fc.updown <- fc.empty
+rownames(fc.updown) <- colnames(X_fc)
+rm(fc.empty,case,case.temp,control, control.temp)
+
+feature_pvalue <- cbind(feature_pvalue, fc.updown)
+
+feature_pvalue <- cbind(linkid, feature_pvalue) %>%
+  dplyr::left_join(C18_verify, by = c("mz", "time"))
+
+write.table(feature_pvalue, file = paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Targeted/", type, "/targeted_c18.txt", sep = ""), row.names = F, quote = F, sep = "\t")
 ```
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
