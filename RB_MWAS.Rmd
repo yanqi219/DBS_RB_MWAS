@@ -4264,3 +4264,213 @@ for (i in sig$Name) {
           stat_compare_means(method = "t.test"))
 }
 ```
+
+# Sensitivity analysis - Agedxmonth
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# Investigate the relationship between DxAge and type of RB
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
+class_use_noOUT <-
+  class_use_noOUT %>%
+  dplyr::mutate(type = case_when(Unilateral == 1 ~ "Unilateral", 
+                                 Bilateral == 1 ~ "Bilateral", 
+                                 Unilateral == 0 & Bilateral == 0 ~ "Control"))
+class_use_noOUT %>%
+  filter(type != "Control") %>%
+  group_by(type) %>%
+  summarise(n = n(), mean = mean(AgeDxMonths), max = max(AgeDxMonths), min = min(AgeDxMonths), sd = sd(AgeDxMonths))
+
+class_use_noOUT %>%
+  filter(type != "Control") %>%
+  filter(AgeDxMonths <= 18) %>%
+  group_by(type) %>%
+  summarise(n = n())
+
+class_use_noOUT %>%
+  filter(type != "Control") %>%
+  ggplot(aes(x=AgeDxMonths, fill=type)) +
+    geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity') +
+    scale_fill_manual(values=c("#69b3a2", "#404080")) +
+    hrbrthemes::theme_ipsum() +
+    labs(fill="")
+```
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# Decide to calculate the correlation of coefficients derived from linear regression between bi and uni cases
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Unilateral/C18neg_MWAS_result.RData")
+Uni_coef <- save.plsresults.allfeatures;rm(save.annotation, save.mummichog_PLS_VIP2, save.plsresults.allfeatures, save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Bilateral/C18neg_MWAS_result.RData")
+Bi_coef <- save.plsresults.allfeatures;rm(save.annotation, save.mummichog_PLS_VIP2, save.plsresults.allfeatures, save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_MWAS_result.RData")
+full_coef <- save.plsresults.allfeatures;rm(save.annotation, save.mummichog_PLS_VIP2, save.plsresults.allfeatures, save.plsresults.sigfeatures)
+
+cor(Uni_coef$coef, full_coef$coef, method = "pearson")
+cor(Bi_coef$coef, full_coef$coef, method = "pearson")
+cor(Uni_coef$coef, Bi_coef$coef, method = "pearson")
+```
+
+Restricted to AgeDxmonths < 18 and stratified by type
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
+
+# Restrict to AgeDxMonths < 18
+class_use_noOUT <- class_use_noOUT %>%
+  dplyr::filter(is.nan(AgeDxMonths) | AgeDxMonths <= 18)
+table(class_use_noOUT$Case_Control_Status)
+
+# Statified by type
+# {
+#   type = "Unilateral"
+#   class_use_noOUT <- class_use_noOUT[which(!is.na(class_use_noOUT$Unilateral)),]
+# }
+table(class_use_noOUT$Case_Control_Status)
+HILICpos_norm_t_noOUt <- HILICpos_norm_t_noOUt[class_use_noOUT$hilicpos,]
+HILICpos_residual <- HILICpos_residual[class_use_noOUT$hilicpos,]
+
+group <- "Case_Control_Status"
+
+X <- HILICpos_norm_t_noOUt
+Y <- class_use_noOUT[[group]]
+linkid <- linkID_hilicpos
+
+###################################################
+### GLM
+###################################################
+
+feature_w_cov <- cbind(class_use_noOUT, X)
+
+lm_func <- function(x) glm(class_use_noOUT[[group]] ~ x + as.factor(MRaceShort) + as.factor(birthyear) + as.factor(MotherAge) + as.factor(QUINYOST_birth) + as.factor(parity) + as.factor(GestWeeks) + as.factor(foreign) + as.factor(sex), data = feature_w_cov, family = "binomial")
+
+feature_pvalue <- map_dfr(feature_w_cov[,718:ncol(feature_w_cov)], function(x) summary(lm_func(x))$coefficients[2,c(1,4)])
+
+# feature_pvalue <- cbind(linkid,feature_pvalue)
+# colnames(feature_pvalue) <- c("mz","time","coef","pvalue")
+colnames(feature_pvalue) <- c("coef","pvalue")
+feature_pvalue <- as.data.frame(feature_pvalue)
+feature_pvalue$adjust_pvalue <- p.adjust(feature_pvalue$pvalue, method="BH")
+rownames(feature_pvalue) <- rownames(linkid)
+
+print(paste("Logistic regression:", sum(feature_pvalue$pvalue <= 0.05), "features are significant (raw_p<=0.05)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.2), "features are significant (adj_p<=0.2)", sep = " "))
+print(paste("Logistic regression:", sum(feature_pvalue$adjust_pvalue <= 0.05), "features are significant (adj_p<=0.05)", sep = " "))
+
+save(feature_pvalue, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Sensitivity/dx18_full_hilicpos.RData")
+```
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# Decide to calculate the correlation of coefficients derived from linear regression between bi and uni cases
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Unilateral/HILICpos_MWAS_result.RData")
+Uni_coef <- save.plsresults.allfeatures;rm(save.annotation, save.mummichog_PLS_VIP2, save.plsresults.allfeatures, save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Bilateral/HILICpos_MWAS_result.RData")
+Bi_coef <- save.plsresults.allfeatures;rm(save.annotation, save.mummichog_PLS_VIP2, save.plsresults.allfeatures, save.plsresults.sigfeatures)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_MWAS_result.RData")
+full_coef <- save.plsresults.allfeatures;rm(save.annotation, save.mummichog_PLS_VIP2, save.plsresults.allfeatures, save.plsresults.sigfeatures)
+
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Sensitivity/dx18_full_hilicpos.RData")
+full_coef_dx18 <- feature_pvalue; rm(feature_pvalue)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Sensitivity/dx18_uni_hilicpos.RData")
+Uni_coef_dx18 <- feature_pvalue; rm(feature_pvalue)
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Sensitivity/dx18_bi_hilicpos.RData")
+Bi_coef_dx18 <- feature_pvalue; rm(feature_pvalue)
+
+cor(full_coef_dx18$coef, full_coef$coef, method = "pearson")
+cor(Bi_coef_dx18$coef, Bi_coef$coef, method = "pearson")
+cor(Uni_coef_dx18$coef, Uni_coef$coef, method = "pearson")
+
+cor(Uni_coef_dx18$coef, full_coef_dx18$coef, method = "pearson")
+cor(Bi_coef_dx18$coef, full_coef_dx18$coef, method = "pearson")
+cor(Uni_coef_dx18$coef, Bi_coef_dx18$coef, method = "pearson")
+```
+
+# Sensitivity analysis - Gestational diabetes
+
+Conduct MWAS on gestational diabetes and compare it w/ RB signals?
+
+Only 8 participants had CPgestDiab == 1, so not able to conduct this analysis
+
+# Sensitivity analysis - Diet biomarker
+
+https://academic.oup.com/cdn/article/4/10/nzaa144/5900522?login=true
+
+In Figure 1 they listed 5 or 6 biomarkers for healthy and unhealthy dietary patterns. They go on to say:
+
+“The correlations between dietary scores and circulating metabolites are generally modest (r ∼0.2–0.4), though robust correlations exist between certain foods and certain serum metabolites that are consistent across cohorts irrespective of fasting status, age, prepregnancy BMI, ethnicity, and/or region…….the average intake of vegetables and/or fruit was associated with serum hippuric acid (a major metabolite of flavonoids prevalent in fruits and vegetables) (47), whereas self-reported consumption of seafood, meat, and eggs was also correlated with serum TMAO (present in free form in fish and animal flesh, and also generated from the actions of host and gut microflora cometabolism of carnitine from intake of meat or eggs) (48, 49). Additionally, intake of nuts/legumes was associated with circulating concentrations of tryptophan betaine (which accumulates in the seeds of most Erythrina species) (50), and was previously reported to be associated with peanut intake (51). In future investigations of maternal diet and child health outcomes these serum metabolites can be combined to constitute a “metabolic signature” reflecting a healthy diet, and generalizable to a multiethnic population.”
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+load(file = "D:/Dropbox/Metabolomics_Retinoblastoma/hilicpos/HILIC_verified_features.RData")
+load(file = "D:/Dropbox/Metabolomics_Retinoblastoma/c18neg/C18_verified_features.RData")
+
+# We only have Hippurate in our data, Hippurate associates with intake of vegetables/fruit/whole grains etc. And it associates with higher Shannon diversity, and lower risk of MetS 
+
+# https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5651863/
+
+ID <- c("HMDB00714")
+HILIC_verify <- HILIC_verify %>%
+  filter(HMDBID %in% ID)
+C18_verify <- C18_verify %>%
+  filter(HMDBID %in% ID)
+```
+
+```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
+# Investigate the relationship between Hippurate and RB
+load("D:/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+# load(file = "D:/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
+# HILICpos_use_t <- HILICpos_use_t[rownames(HILICpos_norm_t_noOUt),]
+class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
+
+hilic_hippurate <- HILICpos_norm_t_noOUt[,rownames(HILIC_verify)]
+c18_hippurate <- C18neg_norm_t_noOUt[,rownames(C18_verify)]
+
+# hilic_hippurate <- HILICpos_residual[,rownames(HILIC_verify)]
+# c18_hippurate <- C18neg_residual[,rownames(C18_verify)]
+
+cor(hilic_hippurate, c18_hippurate)
+
+class_use_noOUT <-
+  class_use_noOUT %>%
+  dplyr::mutate(type = case_when(Unilateral == 1 ~ "Unilateral", 
+                                 Bilateral == 1 ~ "Bilateral", 
+                                 Unilateral == 0 & Bilateral == 0 ~ "Control")) %>%
+  dplyr::mutate(type = factor(type, levels=c("Control","Unilateral","Bilateral"),labels=c("Control","Unilateral","Bilateral"))) %>%
+  dplyr::mutate(hilic_hip = hilic_hippurate) %>%
+  dplyr::mutate(c18_hip = c18_hippurate)
+
+class_use_noOUT %>%
+  group_by(type) %>%
+  summarise(n = n(), mean = mean(hilic_hip), max = max(hilic_hip), min = min(hilic_hip), sd = sd(hilic_hip))
+class_use_noOUT %>%
+  group_by(type) %>%
+  summarise(n = n(), mean = mean(c18_hip), max = max(c18_hip), min = min(c18_hip), sd = sd(c18_hip))
+
+class_use_noOUT %>%
+    ggplot(aes(x=type, y=hilic_hip, fill=type)) +
+    geom_boxplot() +
+    viridis::scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    hrbrthemes::theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)
+    ) +
+    ggtitle("Hippurate") +
+    xlab("") +
+    ylab("") +
+    stat_compare_means(method = "anova")
+class_use_noOUT %>%
+    ggplot(aes(x=type, y=c18_hip, fill=type)) +
+    geom_boxplot() +
+    viridis::scale_fill_viridis(discrete = TRUE, alpha=0.6) +
+    geom_jitter(color="black", size=0.4, alpha=0.9) +
+    hrbrthemes::theme_ipsum() +
+    theme(
+      legend.position="none",
+      plot.title = element_text(size=11)
+    ) +
+    ggtitle("Hippurate") +
+    xlab("") +
+    ylab("") +
+    stat_compare_means(method = "anova")
+```
