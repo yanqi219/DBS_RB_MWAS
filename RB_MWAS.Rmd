@@ -307,9 +307,9 @@ write.csv(data,"/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/N
 
 ```{r, echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
 ## remove missing in more than 20% of all samples
-missing <- apply(HILICpos_use, 1, function(x) (sum(x == 0)/ncol(HILICpos_use) <= 0.2))
+missing <- apply(HILICpos_use, 1, function(x) (sum(x == 0)/ncol(HILICpos_use) <= 0.5))
 HILICpos_norm <- HILICpos_use[missing,]; rm(HILICpos_use)
-missing <- apply(C18neg_use, 1, function(x) (sum(x == 0)/ncol(C18neg_use) <= 0.2))
+missing <- apply(C18neg_use, 1, function(x) (sum(x == 0)/ncol(C18neg_use) <= 0.5))
 C18neg_norm <- C18neg_use[missing,]; rm(C18neg_use)
 linkID_hilicpos <- linkID_hilicpos[which(rownames(linkID_hilicpos) %in% rownames(HILICpos_norm)),]
 linkID_c18neg <- linkID_c18neg[which(rownames(linkID_c18neg) %in% rownames(C18neg_norm)),]
@@ -544,15 +544,15 @@ C18_WaveICA_data <- data.frame(t(C18neg_norm))
 data_wave_reconstruct_c18<-WaveICA(data=C18_WaveICA_data,wf="haar",batch=linkSub_use_c18neg$Batch,group=linkSub_use_c18neg$Retinoblastoma,K=20,t=0.05,t2=0.05,alpha=0)
 C18neg_use_t <- data.frame(data_wave_reconstruct_c18$data_wave)
 
-save(HILICpos_use_t, linkSub_use_hilicpos, linkID_hilicpos, HILICpos_QC, linkSub_QC_hilicpos, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
-save(C18neg_use_t, linkSub_use_c18neg, linkID_c18neg, C18neg_QC, linkSub_QC_c18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
+save(HILICpos_use_t, linkSub_use_hilicpos, linkID_hilicpos, HILICpos_QC, linkSub_QC_hilicpos, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected_missing50.RData")
+save(C18neg_use_t, linkSub_use_c18neg, linkID_c18neg, C18neg_QC, linkSub_QC_c18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected_missing50.RData")
 ```
 
 ### Inspect the quality of sample after imputation
 
 ```{r, echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected_missing50.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected_missing50.RData")
 # outlier <- c("X000005S7U978", "X000005S7F713", "X000005S7Q776", "X000005S7J761", "X00000555Y863", "X000005S7E451", "X000005S8K491", "X000005S7N756", "X000005S89004")
 # HILICpos_use_t <- HILICpos_use_t[-which(rownames(HILICpos_use_t) %in% outlier),]
 # linkSub_use_hilicpos <- linkSub_use_hilicpos[-which(linkSub_use_hilicpos$Sample.ID %in% outlier),]
@@ -639,8 +639,8 @@ Based on this paper: https://pubmed.ncbi.nlm.nih.gov/31936230/ "Finally,  groupi
 Binner is another annotation tool, see this: https://binner.med.umich.edu/, they compared their results w/ xMsannotator
 
 ```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected_missing50.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected_missing50.RData")
 rm(linkSub_QC_hilicpos, linkSub_QC_c18neg, HILICpos_QC, C18neg_QC)
 
 data <- data.frame(t(HILICpos_use_t)) %>%
@@ -653,8 +653,8 @@ write.table(data, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_
 ### Auto scaling
 
 ```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected_missing50.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected_missing50.RData")
 rm(linkSub_QC_hilicpos, linkSub_QC_c18neg, HILICpos_QC, C18neg_QC)
 
 ## Auto scaling
@@ -795,7 +795,7 @@ rownames(save_residual) <- rownames(C18neg_norm_t_noOUt)
 C18neg_residual <- save_residual; rm(save_residual, residual_feature, fit_feature)
 sum(is.na(C18neg_residual))
 
-save(HILICpos_norm_t_noOUt, HILICpos_residual, C18neg_norm_t_noOUt, C18neg_residual, class_use_noOUT, linkID_hilicpos, linkID_c18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+save(HILICpos_norm_t_noOUt, HILICpos_residual, C18neg_norm_t_noOUt, C18neg_residual, class_use_noOUT, linkID_hilicpos, linkID_c18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB_missing50.RData")
 ```
 
 # Demographics
@@ -876,10 +876,10 @@ the number of effective tests?
 ### HILICpos
 
 ```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected_missing50.RData")
 rm(HILICpos_QC, linkID_hilicpos, linkSub_QC_hilicpos, linkSub_use_hilicpos) # This is a non-scaled version, for fold change
 
-load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB_missing50.RData")
 class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
 
 group <- "Case_Control_Status"
@@ -1371,25 +1371,25 @@ save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <-
 save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
 save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,5,4)]
 
-mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_mummichog_input","_vip",vip_threshold,"p",0,"_missing50.txt",sep="")
 write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
 ```
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
-save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_MWAS_result.RData")
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_MWAS_result_missing50.RData")
 ```
 
 ```{bash, engine.opts='-l'}
-mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_mummichog_input_vip1.5p0.txt -m dpj -c 0.05
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_mummichog_input_vip1.5p0_missing50.txt -m dpj -c 0.05
 ```
 
 ### C18neg
 
 ```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected_missing50.RData")
 rm(C18neg_QC, linkID_c18neg, linkSub_QC_c18neg, linkSub_use_c18neg) # This is a non-scaled version, for fold change
 
-load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB_missing50.RData")
 class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
 
 group <- "Case_Control_Status"
@@ -1882,16 +1882,16 @@ save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <-
 save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
 save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,5,4)]
 
-mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_mummichog_input","_vip",vip_threshold,"p",0,"_missing50.txt",sep="")
 write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
 ```
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
-save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_MWAS_result.RData")
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_MWAS_result_missing50.RData")
 ```
 
 ```{bash, engine.opts='-l'}
-mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_mummichog_input_vip1.5p0.txt -m negative -c 0.05
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_mummichog_input_vip1.5p0_missing50.txt -m negative -c 0.05
 ```
 
 ### Final table
