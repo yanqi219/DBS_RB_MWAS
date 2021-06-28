@@ -544,15 +544,15 @@ C18_WaveICA_data <- data.frame(t(C18neg_norm))
 data_wave_reconstruct_c18<-WaveICA(data=C18_WaveICA_data,wf="haar",batch=linkSub_use_c18neg$Batch,group=linkSub_use_c18neg$Retinoblastoma,K=20,t=0.05,t2=0.05,alpha=0)
 C18neg_use_t <- data.frame(data_wave_reconstruct_c18$data_wave)
 
-save(HILICpos_use_t, linkSub_use_hilicpos, linkID_hilicpos, HILICpos_QC, linkSub_QC_hilicpos, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected_missing50.RData")
-save(C18neg_use_t, linkSub_use_c18neg, linkID_c18neg, C18neg_QC, linkSub_QC_c18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected_missing50.RData")
+save(HILICpos_use_t, linkSub_use_hilicpos, linkID_hilicpos, HILICpos_QC, linkSub_QC_hilicpos, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
+save(C18neg_use_t, linkSub_use_c18neg, linkID_c18neg, C18neg_QC, linkSub_QC_c18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
 ```
 
 ### Inspect the quality of sample after imputation
 
 ```{r, echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected_missing50.RData")
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected_missing50.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
 # outlier <- c("X000005S7U978", "X000005S7F713", "X000005S7Q776", "X000005S7J761", "X00000555Y863", "X000005S7E451", "X000005S8K491", "X000005S7N756", "X000005S89004")
 # HILICpos_use_t <- HILICpos_use_t[-which(rownames(HILICpos_use_t) %in% outlier),]
 # linkSub_use_hilicpos <- linkSub_use_hilicpos[-which(linkSub_use_hilicpos$Sample.ID %in% outlier),]
@@ -639,8 +639,8 @@ Based on this paper: https://pubmed.ncbi.nlm.nih.gov/31936230/ "Finally,  groupi
 Binner is another annotation tool, see this: https://binner.med.umich.edu/, they compared their results w/ xMsannotator
 
 ```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected_missing50.RData")
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected_missing50.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
 rm(linkSub_QC_hilicpos, linkSub_QC_c18neg, HILICpos_QC, C18neg_QC)
 
 data <- data.frame(t(HILICpos_use_t)) %>%
@@ -653,8 +653,8 @@ write.table(data, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_
 ### Auto scaling
 
 ```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected_missing50.RData")
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected_missing50.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
 rm(linkSub_QC_hilicpos, linkSub_QC_c18neg, HILICpos_QC, C18neg_QC)
 
 ## Auto scaling
@@ -795,7 +795,7 @@ rownames(save_residual) <- rownames(C18neg_norm_t_noOUt)
 C18neg_residual <- save_residual; rm(save_residual, residual_feature, fit_feature)
 sum(is.na(C18neg_residual))
 
-save(HILICpos_norm_t_noOUt, HILICpos_residual, C18neg_norm_t_noOUt, C18neg_residual, class_use_noOUT, linkID_hilicpos, linkID_c18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB_missing50.RData")
+save(HILICpos_norm_t_noOUt, HILICpos_residual, C18neg_norm_t_noOUt, C18neg_residual, class_use_noOUT, linkID_hilicpos, linkID_c18neg, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
 ```
 
 # Demographics
@@ -876,10 +876,10 @@ the number of effective tests?
 ### HILICpos
 
 ```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected_missing50.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/hilicpos_BatchCorrected.RData")
 rm(HILICpos_QC, linkID_hilicpos, linkSub_QC_hilicpos, linkSub_use_hilicpos) # This is a non-scaled version, for fold change
 
-load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB_missing50.RData")
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
 class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
 
 group <- "Case_Control_Status"
@@ -1371,25 +1371,25 @@ save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <-
 save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
 save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,5,4)]
 
-mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_mummichog_input","_vip",vip_threshold,"p",0,"_missing50.txt",sep="")
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
 write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
 ```
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
-save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_MWAS_result_missing50.RData")
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_MWAS_result.RData")
 ```
 
 ```{bash, engine.opts='-l'}
-mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_mummichog_input_vip1.5p0_missing50.txt -m dpj -c 0.05
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_mummichog_input_vip1.5p0.txt -m dpj -c 0.05
 ```
 
 ### C18neg
 
 ```{r , echo=TRUE, eval=TRUE, message=FALSE, warning=FALSE}
-load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected_missing50.RData")
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/c18neg_BatchCorrected.RData")
 rm(C18neg_QC, linkID_c18neg, linkSub_QC_c18neg, linkSub_use_c18neg) # This is a non-scaled version, for fold change
 
-load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB_missing50.RData")
+load("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Input/DBS_1327_RB.RData")
 class_use_noOUT$Case_Control_Status <- factor(class_use_noOUT$Case_Control_Status, levels=c(0,1),labels=c("Control","Case"))
 
 group <- "Case_Control_Status"
@@ -1882,16 +1882,16 @@ save.mummichog_PLS_VIP2$`p-value`[save.mummichog_PLS_VIP2$vip>=vip_threshold] <-
 save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[order(save.mummichog_PLS_VIP2$`p-value`,-save.mummichog_PLS_VIP2$vip),]
 save.mummichog_PLS_VIP2 <- save.mummichog_PLS_VIP2[,c(1,2,5,4)]
 
-mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_mummichog_input","_vip",vip_threshold,"p",0,"_missing50.txt",sep="")
+mummichog_name <- paste("/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_mummichog_input","_vip",vip_threshold,"p",0,".txt",sep="")
 write.table(save.mummichog_PLS_VIP2,file=mummichog_name,sep = "\t",row.names = F,quote = F)
 ```
 
 ```{r , echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
-save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_MWAS_result_missing50.RData")
+save(save.plsresults.allfeatures, save.plsresults.sigfeatures, save.mummichog_PLS_VIP2, save.annotation, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_MWAS_result.RData")
 ```
 
 ```{bash, engine.opts='-l'}
-mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_mummichog_input_vip1.5p0_missing50.txt -m negative -c 0.05
+mummichog -k /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full -f /Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_mummichog_input_vip1.5p0.txt -m negative -c 0.05
 ```
 
 ### Final table
@@ -1960,6 +1960,61 @@ C18 <- final_table(mwas_data = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma
 
 write.table(HILIC, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILIC_final_table.txt", sep = "\t", row.names = F,quote = F)
 write.table(C18, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18_final_table.txt", sep = "\t", row.names = F,quote = F)
+```
+
+### PIUmet
+
+```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_MWAS_result.RData")
+PIUmet <- save.plsresults.sigfeatures %>%
+  dplyr::filter(adjust_pvalue < 0.05) %>%
+  dplyr::select(mz, pvalue) %>%
+  dplyr::mutate(pvalue = -log10(pvalue)) %>%
+  dplyr::mutate(mode = "positive") %>%
+  dplyr::select(mz, mode, pvalue)
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/C18neg_MWAS_result.RData")
+PIUmet_2 <- save.plsresults.sigfeatures %>%
+  dplyr::filter(adjust_pvalue < 0.05) %>%
+  dplyr::select(mz, pvalue) %>%
+  dplyr::mutate(pvalue = -log10(pvalue)) %>%
+  dplyr::mutate(mode = "negative") %>%
+  dplyr::select(mz, mode, pvalue)
+  
+PIUmet <- rbind(PIUmet, PIUmet_2); rm(PIUmet_2)
+write.table(PIUmet, file = "/Users/qiyan/Desktop/test.txt", sep = "\t", row.names = F, col.names = F, quote = F)
+```
+
+### Draw figures
+
+```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+load(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Full/HILICpos_MWAS_result.RData")
+
+volcano <- save.plsresults.sigfeatures[,c(2,3,8,15)]
+
+volcano$group <- ifelse(volcano$pvalue<=-log10(0.05)&volcano$foldchange>=1,3,
+                        ifelse(volcano$pvalue<=0.05&volcano$foldchange<=-1,2,
+                               ifelse(volcano$pvalue<=0.05&abs(volcano$foldchange)<=1,1,0)))
+volcano$size <- ifelse(volcano$group == 0,0,1)
+ggplot2::ggplot(volcano,aes(x=foldchange,y=vip)) +
+  geom_point(aes(colour=cut(group, c(-Inf,0,1,2,Inf))),show.legend = FALSE, cex=2.5) + 
+  xlim(-3.8,3.8) +
+  scale_fill_hue(c=20, l=20) + 
+  scale_color_manual(values = c("#999999","goldenrod3","springgreen3","firebrick1")) + 
+  scale_size_continuous(range = c(1,3)) +
+  geom_hline(aes(yintercept = 2),color = "red",size = 0.5,linetype = "dashed") +
+  geom_vline(aes(xintercept = 1),color = "red",size = 0.5,linetype = "dashed") +
+  geom_vline(aes(xintercept = -1),color = "red",size = 0.5,linetype = "dashed") +
+  labs(x="Log2(Fold Change)",y="VIP Score") +
+  # theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme_bw(base_size = 20)+
+  theme(axis.text=element_text(face="bold", color = "black"),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.title = element_text(size=20, face="bold"),
+        axis.title.x = element_text(size=20, face="bold"),
+        axis.title.y = element_text(size=20, face="bold"))+
+  geom_label_repel(data = subset(volcano,volcano$vip>=2.5&abs(volcano$foldchange)>=1),
+                   aes(label = paste("mz:",round(mz,4),sep = "")))
 ```
 
 ## Stratified by type
@@ -5301,6 +5356,75 @@ C18 <- final_table(mwas_data = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma
 
 write.table(HILIC, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Sensitivity/HILIC_final_table.txt", sep = "\t", row.names = F,quote = F)
 write.table(C18, file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/MWAS_RB/Output/Sensitivity/C18_final_table.txt", sep = "\t", row.names = F,quote = F)
+```
+
+# Annotation
+```{r, echo=TRUE, eval=FALSE, message=FALSE, warning=FALSE}
+library(xMSannotator)
+dataA <- read.table(file = "/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/ComBat_mzcalibrated_untargeted_mediansummarized_featuretable.txt", header = T, sep = "\t")
+dataA <- dataA[,-c(3:10)]
+
+#Package data files
+# data(example_data)  #example peak intensity matrix
+data(adduct_table)
+data(adduct_weights)
+# data(customIDs)  #example for custom IDs
+# data(customDB)   #example for custom DB
+#data(hmdbAllinf) 
+#data(keggotherinf)
+#data(t3dbotherinf)
+
+
+###########Parameters to change##############
+# dataA<-example_data #use example data provided with the package
+#OR
+#dataA<-read.table("/Users/data.txt",sep="\t",header=TRUE)
+
+#output location
+outloc<-"/Users/qiyan/Dropbox/Metabolomics_Retinoblastoma/c18neg/Annotation/"
+
+max.mz.diff<-10  #mass search tolerance for DB matching in ppm
+max.rt.diff<-10 #retention time tolerance between adducts/isotopes
+corthresh<-0.7 #correlation threshold between adducts/isotopes
+max_isp=5 #maximum number of isotopes to search for
+mass_defect_window=0.01 #mass defect window for isotope search
+
+num_nodes<-8   #number of cores to be used; 2 is recommended for desktop computers due to high memory consumption
+
+db_name="T3DB" #other options: HMDB,Custom,KEGG, LipidMaps, T3DB
+status=NA #other options: "Detected", NA, "Detected and Quantified", "Expected and Not Quantified"
+num_sets<-300 #number of sets into which the total number of database entries should be split into;
+
+mode<-"neg" #ionization mode
+# queryadductlist=c("M+H","M+2H","M+H+NH4","M+ACN+2H","M+2ACN+2H","M+NH4","M+Na","M+ACN+H","M+ACN+Na","M+2ACN+H","2M+H","2M+Na","2M+ACN+H","M+2Na-H","M+H-H2O","M+H-2H2O") #other options: c("M-H","M-H2O-H","M+Na-2H","M+Cl","M+FA-H"); c("positive"); c("negative"); c("all");see data(adduct_table) for complete list
+queryadductlist=c("all")
+
+#provide list of database IDs (depending upon selected database) for annotating only specific metabolites
+customIDs<-NA #c("HMDB15352","HMDB60549","HMDB00159","HMDB00222"); read.csv("/Users/mzmatch_95stdmx_HMDBIDs.csv")
+
+#provide your own custom database to be used for annotation
+#set db_name="Custom" if you use this option
+#Format: ID, Name, Formula, MonoisotopicMass
+customDB<-NA #read.table("/Users/karanuppal/Documents/Emory/JonesLab/Projects/xMSannotator/IROA/IROA_customDB_xMSannotator_plate1.txt",sep="\t",header=TRUE) #custom database; default NA
+
+
+#########################
+
+dataA<-unique(dataA)
+print(dim(dataA))
+print(format(Sys.time(), "%a %b %d %X %Y"))
+
+system.time(annotres<-multilevelannotation(dataA=dataA,max.mz.diff=max.mz.diff,max.rt.diff=max.rt.diff,cormethod="pearson",num_nodes=num_nodes,queryadductlist=queryadductlist,
+mode=mode,outloc=outloc,db_name=db_name, adduct_weights=adduct_weights,num_sets=num_sets,allsteps=TRUE,
+corthresh=corthresh,NOPS_check=TRUE,customIDs=customIDs,missing.value=NA,deepsplit=2,networktype="unsigned",
+minclustsize=10,module.merge.dissimilarity=0.2,filter.by=c("M-H"),biofluid.location=NA,origin=NA,status=status,boostIDs=NA,max_isp=max_isp,
+customDB=customDB,
+HMDBselect="union",mass_defect_window=mass_defect_window,pathwaycheckmode="pm",mass_defect_mode="pos")
+)
+
+
+print(format(Sys.time(), "%a %b %d %X %Y"))
+
 ```
 
 # Note
